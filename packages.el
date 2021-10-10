@@ -6,7 +6,16 @@
 
 ;;; Code:
 
+(require 'msb)
+
+(use-package counsel
+  :after ivy
+  :ensure t
+  :config (counsel-mode)
+  :bind (("M-x" . counsel-M-x)))
+
 (use-package ivy
+  :ensure t
   :diminish
   :bind (("C-s" . swiper)
          :map ivy-minibuffer-map
@@ -19,21 +28,63 @@
          ("C-d" . ivy-switch-buffer-kill)
          :map ivy-reverse-i-search-map
          ("C-k" . ivy-previous-line)
-         ("C-d" . ivy-reverse-i-search-kill))
+         ("C-d" . ivy-reverse-i-search-kill)
+	 ("C-c C-r" . ivy-resume)
+         ("C-x B" . ivy-switch-buffer-other-window))
+  :custom
+  (ivy-count-format "(%d/%d) ")
+  (ivy-use-virtual-buffers t)
   :config
   (ivy-mode 1))
 
-(use-package ivy-rich
-  :after ivy
-  :init
-  (ivy-rich-mode 1))
+(use-package all-the-icons-ivy-rich
+  :ensure t
+  :init (all-the-icons-ivy-rich-mode 1))
 
-(use-package counsel
-  :after ivy
-  :config (counsel-mode))
+(use-package ivy-rich
+	:ensure t
+	:init
+  (ivy-rich-mode 1)
+	(setcdr (assq t ivy-format-functions-alist) #'ivy-format-function-line)
+	:config
+  (setq ivy-rich-display-transformers-list
+        '(ivy-switch-buffer
+					(:columns ((ivy-rich-switch-buffer-icon (:width 2))
+										 (ivy-rich-candidate (:width 30))
+										 (ivy-rich-switch-buffer-size (:width 7))
+										 (ivy-rich-switch-buffer-indicators (:width 4 :face error :align right))
+										 (ivy-rich-switch-buffer-major-mode (:width 12 :face warning))
+										 (ivy-rich-switch-buffer-project (:width 15 :face success))
+										 (ivy-rich-switch-buffer-path
+                      (:width (lambda (x)
+																(ivy-rich-switch-buffer-shorten-path
+																 x
+																 (ivy-rich-minibuffer-width
+																	0.3))))))
+                    :predicate (lambda (cand)
+														     (get-buffer cand)))
+					counsel-find-file
+					(:columns ((ivy-read-file-transformer)
+										 (ivy-rich-counsel-find-file-truename (:face font-lock-doc-face))))
+					counsel-M-x
+					(:columns ((counsel-M-x-transformer (:width 40))
+										 (ivy-rich-counsel-function-docstring (:face font-lock-doc-face)))) ; return docstring of the command
+					counsel-recentf
+					(:columns ((ivy-rich-candidate (:width 0.8))
+										 (ivy-rich-file-last-modified-time (:face font-lock-comment-face)))) ; return last modified time of the file
+					counsel-describe-function
+					(:columns
+					 ((counsel-describe-function-transformer (:width 40))
+						(ivy-rich-counsel-function-docstring (:face font-lock-doc-face)))) ; return docstring of the function
+					counsel-describe-variable
+					(:columns
+					 ((counsel-describe-variable-transformer (:width 40))
+						(ivy-rich-counsel-variable-docstring (:face font-lock-doc-face)))) ; return docstring of the variable
+					)))
 
 (use-package swiper
   :after ivy
+  :ensure t
   :bind (("C-s" . swiper)
          ("C-r" . swiper)))
 
@@ -67,20 +118,6 @@
   :defer t
   :mode (("Jenkinsfile\\'" . groovy-mode)
 	 ("\\.groovy\\'" . groovy-mode)))
-
-;; Magik-mode Major mode for Magik files
-;; https://github.com/roadrunner1776/magik
-(use-package magik-mode
-  :after (flycheck msb)
-  :hook (magik-mode . (lambda ()
-			(add-hook 'before-save-hook (lambda ()
-						      (krn/header-file-name-update)
-						      (krn/indent-buffer))
-				  nil 'local)))
-  :config
-  (setq magik-lint-jar-file (expand-file-name "magik-lint/magik-lint.jar" user-emacs-directory))
-  (magik-global-bindings)
-  (magik-menu-set-menus))
 
 ;; Magit - a GIT porcelain in Emacs
 ;; https://magit.vc/
@@ -247,28 +284,112 @@
   :bind (:map company-active-map
 	      ("<tab>" . company-complete)))
 
-(use-package all-the-icons)
+(use-package auto-complete)
+
+(use-package ibuffer
+  :bind (("C-x C-b" . 'ibuffer))
+  :init
+  (setq ibuffer-formats
+	'((mark modified read-only locked
+		" " (name 30 30 :left :elide)
+		" " (size 9 -1 :right)
+		" " (mode 16 16 :left :elide) " " filename-and-process)
+	  (mark " " (name 16 -1) " " filename))))
+
+(use-package all-the-icons-ibuffer
+  :ensure t
+  :init (all-the-icons-ibuffer-mode 1))
+
+(use-package treemacs-all-the-icons
+  :after treemacs)
 
 (use-package doom-themes
-  :after (all-the-icons)
   :ensure t
   :config
   ;; Global settings (defaults)
   (setq doom-themes-enable-bold t    ; if nil, bold is universally disabled
         doom-themes-enable-italic t) ; if nil, italics is universally disabled
-  (load-theme 'doom-monokai-pro t)
-
-  ;; Enable flashing mode-line on errors
-  (doom-themes-visual-bell-config)
-  ;; Enable custom neotree theme (all-the-icons must be installed!)
-  (doom-themes-neotree-config)
+  (load-theme 'doom-xcode t)
+  (setq doom-themes-treemacs-theme "doom-atom") ; use "doom-colors" for less minimal icon theme
+  (doom-themes-treemacs-config)
   ;; Corrects (and improves) org-mode's native fontification.
   (doom-themes-org-config))
 
 (use-package doom-modeline
-  :after (doom-themes)
   :ensure t
   :hook (after-init . doom-modeline-mode))
+
+; Magik-mode Major mode for Magik files
+; https://github.com/roadrunner1776/magik
+(use-package magik-mode
+  :after (flycheck msb)
+  :hook (magik-mode . (lambda ()
+			(add-hook 'before-save-hook (lambda ()
+						      (krn/header-file-name-update)
+						      (krn/indent-buffer))
+				  nil 'local)))
+  :config
+  (setq magik-lint-jar-file (expand-file-name "magik-lint/magik-lint.jar" user-emacs-directory))
+  (magik-menu-set-menus)
+  (magik-global-bindings))
+
+;; iflipb - navigate through buffers
+;; https://www.emacswiki.org/emacs/iflipb
+(use-package iflipb
+  :bind (("<C-tab>" . 'iflipb-next-buffer)
+	 ("<C-S-tab>" . 'iflipb-previous-buffer)
+	 ("M-o" . 'other-window)))
+
+;; enhanced ruby mode
+;; https://github.com/zenspider/enhanced-ruby-mode
+(use-package enh-ruby-mode)
+(add-to-list 'auto-mode-alist
+             '("\\(?:\\.rb\\|ru\\|rake\\|thor\\|jbuilder\\|gemspec\\|podspec\\|/\\(?:Gem\\|Rake\\|Cap\\|Thor\\|Vagrant\\|Guard\\|Pod\\)file\\)\\'" . enh-ruby-mode))
+
+(require 'auto-complete-config)
+(ac-config-default)
+(setq ac-ignore-case nil)
+(add-to-list 'ac-modes 'enh-ruby-mode)
+(add-to-list 'ac-modes 'web-mode)
+
+(use-package rainbow-mode)
+
+;; robe mode
+;; https://github.com/dgutov/robe
+(use-package robe)
+(add-hook 'ruby-mode-hook 'robe-mode)
+(eval-after-load 'company
+  '(push 'company-robe company-backends))
+
+(add-hook 'enh-ruby-mode-hook 'robe-mode)
+(add-hook 'enh-ruby-mode-hook 'yard-mode)
+
+;; flyspell
+;; requires brew install ispell on OSX
+(require 'flyspell)
+(setq flyspell-issue-message-flg nil)
+(add-hook 'enh-ruby-mode-hook
+          (lambda () (flyspell-prog-mode)))
+
+(add-hook 'web-mode-hook
+          (lambda () (flyspell-prog-mode)))
+;; flyspell mode breaks auto-complete mode without this.
+(ac-flyspell-workaround)
+
+;; multiple cursors
+;; https://github.com/magnars/multiple-cursors.el
+(use-package multiple-cursors)
+
+(unless (package-installed-p 'inf-ruby)
+  (package-install 'inf-ruby))
+(add-hook 'enh-ruby-mode-hook 'inf-ruby-minor-mode)
+
+(use-package smartparens)
+(add-hook 'js-mode-hook #'smartparens-mode)
+(add-hook 'emacs-lisp-mode-hook #'smartparens-mode)
+(add-hook 'enh-ruby-mode #'smartparens-mode)
+
+(use-package yasnippet-snippets)
 
 (provide 'packages)
 ;;; packages.el ends here
