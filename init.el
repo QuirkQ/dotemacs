@@ -17,6 +17,9 @@
 (column-number-mode)
 (global-display-line-numbers-mode t)
 
+;; Start in full screen
+(add-to-list 'default-frame-alist '(fullscreen . fullscreen))
+
 ;; Disable line numbers for some modes
 (dolist (mode '(org-mode-hook
                 term-mode-hook
