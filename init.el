@@ -1,4 +1,4 @@
-;;; package --- Summary
+;;; init.el
 
 ;;; Commentary:
 
@@ -21,95 +21,258 @@
 (dolist (mode '(org-mode-hook
                 term-mode-hook
                 shell-mode-hook
-		magik-session-mode
-		ibuffer-mode
+		            ibuffer-mode
                 treemacs-mode-hook
                 eshell-mode-hook))
   (add-hook mode (lambda () (display-line-numbers-mode 0))))
 
-(defun set-exec-path-from-shell-PATH ()
-  "Set up Emacs' `exec-path' and PATH environment variable to match
-that used by the user's shell.
-
-This is particularly useful under Mac OS X and macOS, where GUI
-apps are not started from a shell."
-  (interactive)
-  (let ((path-from-shell (replace-regexp-in-string
-			  "[ \t\n]*$" "" (shell-command-to-string
-					  "$SHELL --login -c 'echo $PATH'"
-						    ))))
-    (setenv "PATH" path-from-shell)
-    (setq exec-path (split-string path-from-shell path-separator))))
-
-(set-exec-path-from-shell-PATH)
-
 ;; Set up the visible bell
 (setq visible-bell t)
-
-;; Set theme
-;(load-theme 'wombat)
 
 ;; Make ESC quit prompts
 (global-set-key (kbd "<escape>") 'keyboard-escape-quit)
 
-;; Initialize package sources
-(require 'package)
+;; Initialise straight.el : https://github.com/radian-software/straight.el
+(defvar bootstrap-version)
+(let ((bootstrap-file
+       (expand-file-name "straight/repos/straight.el/bootstrap.el" user-emacs-directory))
+      (bootstrap-version 6))
+  (unless (file-exists-p bootstrap-file)
+    (with-current-buffer
+        (url-retrieve-synchronously
+         "https://raw.githubusercontent.com/radian-software/straight.el/develop/install.el"
+         'silent 'inhibit-cookies)
+      (goto-char (point-max))
+      (eval-print-last-sexp)))
+  (load bootstrap-file nil 'nomessage))
+(straight-use-package 'use-package)
+(setq straight-use-package-by-default t)
+(setq straight-vc-git-default-protocol 'ssh)
+(setq use-package-verbose nil) ;; use 't' to see execution profile at startup
 
-(setq package-archives '(("melpa" . "https://melpa.org/packages/")
-                         ("org" . "https://orgmode.org/elpa/")
-                         ("elpa" . "https://elpa.gnu.org/packages/")))
+;; nerd-icons : https://github.com/rainstormstudio/nerd-icons.el
+(use-package nerd-icons
+  :straight (nerd-icons :type git :host github :repo "rainstormstudio/nerd-icons.el"))
 
-(package-initialize)
-(unless package-archive-contents
- (package-refresh-contents))
+;; shrink-path : https://github.com/zbelial/shrink-path.el
+(use-package shrink-path
+  :straight (shrink-path :type git :host github :repo "zbelial/shrink-path.el")
+  :ensure t
+  :demand t)
 
-;; Initialize use-package on non-Linux platforms
-(unless (package-installed-p 'use-package)
-   (package-install 'use-package))
+;; doom-theme : https://github.com/doomemacs/themes
+(use-package doom-themes
+  :ensure t
+  :straight (doom-themes :type git :host github :repo "doomemacs/themes")
+  :config
+  ;; Global settings (defaults)
+  (setq doom-themes-enable-bold t    ; if nil, bold is universally disabled
+        doom-themes-enable-italic t) ; if nil, italics is universally disabled
+  (load-theme 'doom-one t)
 
-(require 'use-package)
-(setq use-package-always-ensure t)
+  ;; Enable flashing mode-line on errors
+  (doom-themes-visual-bell-config))
 
-(defconst user-init-dir
-  (cond ((boundp 'user-emacs-directory)
-         user-emacs-directory)
-        ((boundp 'user-init-directory)
-         user-init-directory)
-        (t "~/.emacs.d/")))
+;; doom-modeline : https://github.com/seagle0128/doom-modeline
+(use-package doom-modeline
+  :ensure t
+  :straight (doom-modeline :type git :host github :repo "seagle0128/doom-modeline")
+  :hook (after-init . doom-modeline-mode))
 
-(defun load-user-file (file)
-  (interactive "f")
-  "Load a file in current user's configuration directory"
-  (load-file (expand-file-name file user-init-dir)))
+;; treemacs : https://github.com/Alexander-Miller/treemacs
+(use-package treemacs
+  :ensure t
+  :defer t
+  :straight (treemacs :type git :host github :repo "Alexander-Miller/treemacs")
+  :config
+  (progn 
+    (treemacs-follow-mode t)
+    (treemacs-filewatch-mode t)
+    (treemacs-fringe-indicator-mode 'always)
+    (when treemacs-python-executable
+      (treemacs-git-commit-diff-mode t))
+    (pcase (cons (not (null (executable-find "git")))
+                 (not (null treemacs-python-executable)))
+      (`(t . t)
+       (treemacs-git-mode 'deferred))
+      (`(t . _)
+       (treemacs-git-mode 'simple)))
 
-(use-package all-the-icons)
+    (treemacs-hide-gitignored-files-mode nil))
+  :bind
+  (:map global-map
+        ("<f12>"   . treemacs)))
 
-(load-user-file "customizations/rbenv/rbenv.el")
-(require 'rbenv)
-(global-rbenv-mode)
+;; treemacs-nerd-icons : https://github.com/rainstormstudio/treemacs-nerd-icons
+(use-package treemacs-nerd-icons
+  :straight (treemacs-nerd-icons :type git :host github :repo "rainstormstudio/treemacs-nerd-icons")
+  :config
+  (treemacs-load-theme "nerd-icons"))
 
-(load-user-file "packages.el")
+;; treemacs-magit : https://github.com/Alexander-Miller/treemacs
+(use-package treemacs-magit
+  :ensure t
+  :after (treemacs magit))
 
-;(load-user-file "mode-line.el")
+;; ibuffer : [build-in]
+(use-package ibuffer
+  :straight nil
+  :bind ("C-x C-b" . ibuffer))
 
-(set-face-attribute 'default nil :font "Hack" :height 120)
+;; ibuffer-vc : https://github.com/purcell/ibuffer-vc
+(use-package ibuffer-vc
+  :ensure t
+  :after ibuffer
+  :straight (ibuffer-vc :type git :host github :repo "purcell/ibuffer-vc")
+  :config
+  (add-hook 'ibuffer-hook
+            (lambda ()
+              (ibuffer-vc-set-filter-groups-by-vc-root)
+              (unless (eq ibuffer-sorting-mode 'alphabetic)
+                (ibuffer-do-sort-by-alphabetic)))))
 
-(define-key enh-ruby-mode-map (kbd "<f3> b") 'ruby-send-buffer)
+;; page-break-lines : https://github.com/purcell/page-break-lines
+(use-package page-break-lines
+  :ensure t
+  :straight (page-break-lines :type git :host github :repo "purcell/page-break-lines"))
 
-(custom-set-variables
- ;; custom-set-variables was added by Custom.
- ;; If you edit it by hand, you could mess it up, so be careful.
- ;; Your init file should contain only one such instance.
- ;; If there is more than one, they won't work right.
- '(package-selected-packages
-   '(smartparens smartparens-config company magik-mode treemacs-persp treemacs-magit treemacs-icons-dired treemacs-projectile treemacs-evil treemacs flycheck-pos-tip flycheck yasnippet git-gutter-fringe magit-todos magit-gitflow magit iflipb groovy-mode markdown-mode dockerfile-mode csv-mode ivy-rich counsel ivy use-package)))
-(custom-set-faces
- ;; custom-set-faces was added by Custom.
- ;; If you edit it by hand, you could mess it up, so be careful.
- ;; Your init file should contain only one such instance.
- ;; If there is more than one, they won't work right.
- )
+;; dashboard : https://github.com/emacs-dashboard/emacs-dashboard
+(use-package dashboard
+  :ensure t
+  :straight (dashboard :type git :host github :repo "emacs-dashboard/emacs-dashboard")
+  :config
+  (dashboard-setup-startup-hook))
 
+;; delsel : [built-int]
+(use-package delsel
+  :ensure nil ; It's a built-in package, so no need to ensure its installation.
+  :config
+  (delete-selection-mode 1))
+
+;; ivy : https://github.com/abo-abo/swiper
+(use-package ivy
+  :ensure t
+  :diminish
+  :straight (ivy :type git :host github :repo "abo-abo/swiper")
+  :config
+  (ivy-mode 1)
+  (setq ivy-use-virtual-buffers t)
+  (setq ivy-count-format "(%d/%d) "))
+
+;; swiper : https://github.com/abo-abo/swiper
+(use-package swiper
+  :ensure t
+  :straight (swiper :type git :host github :repo "abo-abo/swiper")  
+  :bind (("C-s" . swiper)))
+
+;; counsel : https://github.com/abo-abo/swiper
+(use-package counsel
+  :ensure t
+  :straight (counsel :type git :host github :repo "abo-abo/swiper")  
+  :bind (("M-x" . counsel-M-x)
+         ("C-x C-f" . counsel-find-file)
+         ("C-c k" . counsel-ag)
+         ("<f1> f" . counsel-describe-function)
+         ("<f1> v" . counsel-describe-variable)
+         ("<f1> l" . counsel-find-library)
+         ("<f2> i" . counsel-info-lookup-symbol)
+         ("<f2> u" . counsel-unicode-char)))
+
+;; magit : https://github.com/magit/magit
+(use-package magit
+  :ensure t
+  :straight (magit :type git :host github :repo "magit/magit")
+  :bind ("C-x g" . magit-status))
+
+;; Flycheck : https://www.flycheck.org
+(use-package flycheck
+  :ensure t
+  :straight (flycheck :type git :host github :repo "flycheck/flycheck")
+  :init
+  (add-hook 'after-init-hook #'global-flycheck-mode)
+  :config
+  (setq flycheck-emacs-lisp-load-path 'inherit)
+  (global-flycheck-mode t))
+
+;; CSV-mode : [built-in]
+(use-package csv-mode
+  :mode (("\\.csv\\'" . csv-mode)))
+
+;; YAML-mode : [built-in]
+(use-package yaml-mode
+  :mode (("\\.yml\\'" . yaml-mode)
+   ("\\.yaml\\'" . yaml-mode)))
+
+;; Dockerfile-mode : https://github.com/spotify/dockerfile-mode
+(use-package dockerfile-mode
+  :straight (dockerfile-mode :type git :host github :repo "spotify/dockerfile-mode")
+  :mode (("Dockerfile\\'" . dockerfile-mode)))
+
+;; Markdown major mode : https://github.com/jrblevin/markdown-mode
+(use-package markdown-mode
+  :ensure t
+  :straight (markdown-mode :type git :host github :repo "jrblevin/markdown-mode")
+  :commands (markdown-mode gfm-view-mode)
+  :mode (("README\\.md\\'" . gfm-view-mode)
+   ("\\.md\\'" . markdown-mode)
+   ("\\.markdown\\'" . markdown-mode))
+  :init (setq markdown-command "multimarkdown"))
+
+;; Groovy major mode : https://github.com/Groovy-Emacs-Modes/groovy-emacs-modes
+(use-package groovy-mode
+  :straight (groovy-mode :type git :host github :repo "Groovy-Emacs-Modes/groovy-emacs-modes")
+  :mode (("Jenkinsfile\\'" . groovy-mode)
+   ("\\.groovy\\'" . groovy-mode)))
+
+;; Python major mode : https://gitlab.com/python-mode-devs/python-mode
+(use-package python-mode
+  :straight (python-mode :type git :host gitlab :repo "python-mode-devs/python-mode")
+  :mode ("\\.py\\'" . python-mode)
+  :interpreter ("python" . python-mode))
+
+;; asdf.el : https://github.com/tabfugnic/asdf.el
+(use-package asdf
+  :ensure t
+  :straight (asdf :type git :host github :repo "tabfugnic/asdf.el"
+                  :fork (:host github
+                         :repo "swkkrdswk/asdf.el"))
+  :config
+  (asdf-enable))
+
+;; auto-complete : https://github.com/auto-complete/auto-complete
+(use-package auto-complete
+  :ensure t
+  :straight (auto-complete :type git :host github :repo "auto-complete/auto-complete")
+  :config
+  (ac-config-default))
+
+;; robe : https://github.com/dgutov/robe
+(use-package robe
+  :ensure t
+  :straight (robe :type git :host github :repo "dgutov/robe")
+  :init
+  (add-hook 'enh-ruby-mode-hook 'robe-mode)
+  (add-hook 'ruby-ts-mode-hook 'robe-mode)
+  (add-hook 'robe-mode-hook 'ac-robe-setup))
+
+;; Enhanced Ruby Mode : https://github.com/zenspider/Enhanced-Ruby-Mode
+(use-package enh-ruby-mode
+  :ensure t
+  :straight (enh-ruby-mode :type git :host github :repo "zenspider/Enhanced-Ruby-Mode")
+  :mode (("\\.rb\\'" . enh-ruby-mode)
+         ("Gemfile\\'" . enh-ruby-mode)
+         ("Rakefile\\'" . enh-ruby-mode)
+         ("\\.rake\\'" . enh-ruby-mode)
+         ("\\.ru\\'" . enh-ruby-mode)))
+
+;; smartparens : https://github.com/Fuco1/smartparens
+(use-package smartparens-mode
+  :ensure smartparens  ;; install the package
+  :straight (smartparens :type git :host github :repo "Fuco1/smartparens")
+  :hook (prog-mode text-mode markdown-mode) ;; add `smartparens-mode` to these hooks
+  :config
+  ;; load default config
+  (require 'smartparens-config))
 
 (provide 'init)
 ;;; init.el ends here
