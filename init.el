@@ -177,6 +177,7 @@
   :bind (("M-x" . counsel-M-x)
          ("C-x C-f" . counsel-find-file)
          ("C-c k" . counsel-ag)
+	 ("C-c j" . counsel-git-grep)
          ("<f1> f" . counsel-describe-function)
          ("<f1> v" . counsel-describe-variable)
          ("<f1> l" . counsel-find-library)
