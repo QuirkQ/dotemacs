@@ -10,6 +10,9 @@ recentf
 ac-comphist.dat
 .\#*
 
+# treemacs
+/.cache/
+
 # Org-mode
 .org-id-locations
 *_archive
