@@ -332,5 +332,13 @@
   :straight (docker :type git :host github :repo "Silex/docker.el")
   :bind ("C-c d" . docker))
 
+;; iflipb : https://github.com/jrosdahl/iflipb
+(use-package iflipb
+  :ensure t
+  :straight (iflipb :type git :host github :repo "jrosdahl/iflipb")
+  :bind (("<C-tab>" . 'iflipb-next-buffer)
+	 ("<C-S-tab>" . 'iflipb-previous-buffer)
+	 ("M-o" . 'other-window)))
+
 (provide 'init)
 ;;; init.el ends here
