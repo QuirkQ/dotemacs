@@ -21,8 +21,10 @@
 (dolist (mode '(org-mode-hook
                 term-mode-hook
                 shell-mode-hook
-		            ibuffer-mode
+		ibuffer-mode
                 treemacs-mode-hook
+                inf-ruby-mode-hook
+                vterm-mode-hook
                 eshell-mode-hook))
   (add-hook mode (lambda () (display-line-numbers-mode 0))))
 
@@ -246,24 +248,43 @@
   :config
   (ac-config-default))
 
+;; Enhanced Ruby Mode : https://github.com/zenspider/Enhanced-Ruby-Mode
+(use-package enh-ruby-mode
+  :ensure t
+  :straight (enh-ruby-mode :type git :host github :repo "zenspider/Enhanced-Ruby-Mode")
+  :config
+  (defun my/ruby-mode-hook ()
+    (add-hook 'before-save-hook 'my/ruby-mode-before-save nil t))
+
+  (defun my/ruby-mode-before-save ()
+    (when (eq major-mode 'enh-ruby-mode)
+    (indent-region (point-min) (point-max) nil)))
+  :init
+  (add-hook 'enh-ruby-mode-hook 'auto-complete-mode)
+  (add-hook 'enh-ruby-mode-hook 'my/ruby-mode-hook)
+  :mode (("\\.rb\\'" . enh-ruby-mode)
+         ("Gemfile\\'" . enh-ruby-mode)
+         ("Rakefile\\'" . enh-ruby-mode)
+         ("\\.rake\\'" . enh-ruby-mode)
+         ("\\.ru\\'" . enh-ruby-mode)))
+
 ;; robe : https://github.com/dgutov/robe
 (use-package robe
   :ensure t
+  :after enh-ruby-mode
   :straight (robe :type git :host github :repo "dgutov/robe")
   :init
   (add-hook 'enh-ruby-mode-hook 'robe-mode)
   (add-hook 'ruby-ts-mode-hook 'robe-mode)
   (add-hook 'robe-mode-hook 'ac-robe-setup))
 
-;; Enhanced Ruby Mode : https://github.com/zenspider/Enhanced-Ruby-Mode
-(use-package enh-ruby-mode
+;; int-ruby : https://github.com/nonsequitur/inf-ruby
+(use-package inf-ruby
   :ensure t
-  :straight (enh-ruby-mode :type git :host github :repo "zenspider/Enhanced-Ruby-Mode")
-  :mode (("\\.rb\\'" . enh-ruby-mode)
-         ("Gemfile\\'" . enh-ruby-mode)
-         ("Rakefile\\'" . enh-ruby-mode)
-         ("\\.rake\\'" . enh-ruby-mode)
-         ("\\.ru\\'" . enh-ruby-mode)))
+  :after enh-ruby-mode
+  :straight (inf-ruby :type git :host github :repo "nonsequitur/inf-ruby")
+  :init
+  (add-hook 'enh-ruby-mode-hook 'inf-ruby-minor-mode))
 
 ;; smartparens : https://github.com/Fuco1/smartparens
 (use-package smartparens-mode
@@ -273,6 +294,40 @@
   :config
   ;; load default config
   (require 'smartparens-config))
+
+;; yasnippet : https://github.com/joaotavora/yasnippet
+(use-package yasnippet
+  :ensure t
+  :straight (yasnippet :type git :host github :repo "joaotavora/yasnippet")
+  :init
+  (add-hook 'prog-mode-hook #'yas-minor-mode)
+  :bind 
+  (:map yas-minor-mode-map
+        ("<tab>" . yas-expand)))
+
+;; yasnippet-snippets : https://github.com/AndreaCrotti/yasnippet-snippets
+(use-package yasnippet-snippets
+  :ensure t
+  :straight (yasnippet-snippets :type git :host github :repo "AndreaCrotti/yasnippet-snippets"))
+
+;; vterm : https://github.com/akermu/emacs-libvterm
+(use-package vterm
+    :ensure t
+    :straight (vterm :type git :host github :repo "akermu/emacs-libvterm")
+    :config
+    (setq vterm-shell "/opt/homebrew/bin/fish")
+    (setq vterm-always-compile-module t))
+
+;; eterm-256color : https://github.com/dieggsy/eterm-256color
+(use-package eterm-256color
+  :ensure t
+  :straight (eterm-256color :type git :host github :repo "dieggsy/eterm-256color"))
+
+;; docker.el : https://github.com/Silex/docker.el
+(use-package docker
+  :ensure t
+  :straight (docker :type git :host github :repo "Silex/docker.el")
+  :bind ("C-c d" . docker))
 
 (provide 'init)
 ;;; init.el ends here
