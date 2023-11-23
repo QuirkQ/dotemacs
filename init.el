@@ -90,7 +90,8 @@
   :defer t
   :straight (treemacs :type git :host github :repo "Alexander-Miller/treemacs")
   :config
-  (progn 
+  (progn
+    (setq treemacs-width 40)
     (treemacs-follow-mode t)
     (treemacs-filewatch-mode t)
     (treemacs-fringe-indicator-mode 'always)
@@ -287,6 +288,14 @@
   :ensure t
   :after enh-ruby-mode
   :straight (inf-ruby :type git :host github :repo "nonsequitur/inf-ruby")
+  :config
+  (add-to-list 'inf-ruby-implementations '("pry" . "pry"))
+  (setq inf-ruby-default-implementation "pry")
+  (setq inf-ruby-first-prompt-pattern "^\\[[0-9]+\\] pry\\((.*)\\)> *")
+  (setq inf-ruby-prompt-pattern "^\\[[0-9]+\\] pry\\((.*)\\)[>*\"'] *")
+  :bind
+  (:map enh-ruby-mode-map
+        ("<f3> <f3>" . ruby-send-buffer))
   :init
   (add-hook 'enh-ruby-mode-hook 'inf-ruby-minor-mode))
 
