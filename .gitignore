@@ -9,6 +9,7 @@ tramp
 recentf
 ac-comphist.dat
 .\#*
+/transient/
 
 # treemacs
 /.cache/
@@ -39,6 +40,9 @@ ac-comphist.dat
 # cask packages
 .cask/
 dist/
+
+# Yasnippet
+/snippets/
 
 # Flycheck
 flycheck_*.el
