@@ -1,4 +1,4 @@
-;;; init.el
+;;; package --- init.el
 
 ;;; Commentary:
 
@@ -246,12 +246,22 @@
   :config
   (asdf-enable))
 
-;; auto-complete : https://github.com/auto-complete/auto-complete
-(use-package auto-complete
+;; lsp-mode : https://emacs-lsp.github.io/lsp-mode
+(use-package lsp-mode
+  :straight (lsp-mode :type git :host github :repo "emacs-lsp/lsp-mode")
+  :init
+  (setq lsp-keymap-prefix "C-c l")
+  :hook (
+         (enh-ruby-mode . lsp))
+  :commands lsp)
+
+;; company-mode : https://github.com/company-mode/company-mode
+(use-package company
   :ensure t
-  :straight (auto-complete :type git :host github :repo "auto-complete/auto-complete")
+  :straight (company :type git :host github :repo "company-mode/company-mode")
   :config
-  (ac-config-default))
+  (setq company-minimum-prefix-length 1
+        company-idle-delay 0.0))
 
 ;; Enhanced Ruby Mode : https://github.com/zenspider/Enhanced-Ruby-Mode
 (use-package enh-ruby-mode
@@ -261,12 +271,22 @@
   (defun my/ruby-mode-hook ()
     (add-hook 'before-save-hook 'my/ruby-mode-before-save nil t))
 
+  (defun my/tab-indent-or-complete ()
+    "Indent the current line or trigger completion."
+    (interactive)
+    (if (or (use-region-p) (looking-back "^\\s-*"))
+        (indent-for-tab-command) ; If no region is active or at the beginning of a line, just indent
+      (company-indent-or-complete-common))) ; Otherwise, trigger completion
+
   (defun my/ruby-mode-before-save ()
     (when (eq major-mode 'enh-ruby-mode)
-    (indent-region (point-min) (point-max) nil)))
+      (indent-region (point-min) (point-max) nil)))
+  :bind
+  (:map enh-ruby-mode-map
+        ("<tab>" . my/tab-indent-or-complete))
   :init
-  (add-hook 'enh-ruby-mode-hook 'auto-complete-mode)
   (add-hook 'enh-ruby-mode-hook 'my/ruby-mode-hook)
+  (add-hook 'enh-ruby-mode-hook 'company-mode)
   :mode (("\\.rb\\'" . enh-ruby-mode)
          ("Gemfile\\'" . enh-ruby-mode)
          ("Rakefile\\'" . enh-ruby-mode)
@@ -281,7 +301,7 @@
   :init
   (add-hook 'enh-ruby-mode-hook 'robe-mode)
   (add-hook 'ruby-ts-mode-hook 'robe-mode)
-  (add-hook 'robe-mode-hook 'ac-robe-setup))
+  (add-to-list 'company-backends 'company-robe))
 
 ;; int-ruby : https://github.com/nonsequitur/inf-ruby
 (use-package inf-ruby
@@ -331,6 +351,11 @@
     (setq vterm-shell "/opt/homebrew/bin/fish")
     (setq vterm-always-compile-module t))
 
+;; multi-vterm : https://github.com/suonlight/multi-vterm
+(use-package multi-vterm
+    :ensure t
+    :straight (multi-vterm :type git :host github :repo "suonlight/multi-vterm"))
+
 ;; eterm-256color : https://github.com/dieggsy/eterm-256color
 (use-package eterm-256color
   :ensure t
@@ -350,5 +375,19 @@
 	 ("<C-S-tab>" . 'iflipb-previous-buffer)
 	 ("M-o" . 'other-window)))
 
+;; openai : https://github.com/emacs-openai/openai
+(use-package openai
+  :straight (openai :type git :host github :repo "emacs-openai/openai")
+  :config
+  (setq openai-key "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"))
+
+;; chatgpt : https://github.com/emacs-openai/chatgpt
+(use-package chatgpt
+  :straight (chatgpt :type git :host github :repo "emacs-openai/chatgpt")
+  :config
+  (setq chatgpt-model "gpt-3.5-turbo"))
+
 (provide 'init)
 ;;; init.el ends here
+
+
