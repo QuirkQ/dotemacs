@@ -20,6 +20,11 @@
 ;; Start in full screen
 (add-to-list 'default-frame-alist '(fullscreen . fullscreen))
 
+;; Always prefer UTF-8
+(prefer-coding-system 'utf-8-unix)
+(setq x-select-request-type
+    '(UTF8_STRING COMPOUND_TEXT TEXT STRING))
+
 ;; Disable line numbers for some modes
 (dolist (mode '(org-mode-hook
                 term-mode-hook
@@ -120,6 +125,11 @@
   :ensure t
   :after (treemacs magit))
 
+;; aggressive-indent-mode : https://github.com/Malabarba/aggressive-indent-mode
+(use-package aggressive-indent
+  :ensure t
+  :straight (aggressive-indent :type git :host github :repo "Malabarba/aggressive-indent-mode", :files ("dist" "*.el")))
+
 ;; ibuffer : [build-in]
 (use-package ibuffer
   :straight nil
@@ -168,13 +178,13 @@
 ;; swiper : https://github.com/abo-abo/swiper
 (use-package swiper
   :ensure t
-  :straight (swiper :type git :host github :repo "abo-abo/swiper")  
+  :straight (swiper :type git :host github :repo "abo-abo/swiper")
   :bind (("C-s" . swiper)))
 
 ;; counsel : https://github.com/abo-abo/swiper
 (use-package counsel
   :ensure t
-  :straight (counsel :type git :host github :repo "abo-abo/swiper")  
+  :straight (counsel :type git :host github :repo "abo-abo/swiper")
   :bind (("M-x" . counsel-M-x)
          ("C-x C-f" . counsel-find-file)
          ("C-c k" . counsel-ag)
@@ -185,11 +195,42 @@
          ("<f2> i" . counsel-info-lookup-symbol)
          ("<f2> u" . counsel-unicode-char)))
 
+;; magit : https://github.com/magit/transient
+(use-package transient
+  :straight (transient :type git :host github :repo "magit/transient")
+  :ensure t)
+
 ;; magit : https://github.com/magit/magit
 (use-package magit
   :ensure t
   :straight (magit :type git :host github :repo "magit/magit")
   :bind ("C-x g" . magit-status))
+
+;; forge : https://github.com/magit/forge
+(use-package forge
+  :ensure t
+  :after magit
+  :straight (forge :type git :host github :repo "magit/forge")
+  :config
+  (setq auth-sources '("/Users/quint.pieters/.authinfo")))
+
+;; forge : https://github.com/iqbalansari/emacs-emojify
+(use-package emojify
+  :ensure t
+  :straight (emojify :type git :host github :repo "iqbalansari/emacs-emojify"))
+
+;; code-review : https://github.com/wandersoncferreira/code-review
+(use-package code-review
+  :ensure t
+  :after forge
+  :straight (code-review :type git
+			 :host github
+			 :repo "wandersoncferreira/code-review"
+			 :fork (:host github
+                                :repo "phelrine/code-review"
+				:branch "fix/closql-update"))
+  :init
+  (add-hook 'code-review-mode-hook #'emojify-mode))
 
 ;; Flycheck : https://www.flycheck.org
 (use-package flycheck
@@ -237,6 +278,11 @@
   :mode ("\\.py\\'" . python-mode)
   :interpreter ("python" . python-mode))
 
+;; Hashicorp HCL mode : https://github.com/hcl-emacs/hcl-mode
+(use-package hcl-mode
+  :straight (hcl-mode :type git :host github :repo "hcl-emacs/hcl-mode")
+  :mode ("\\.hcl\\'" . hcl-mode))
+
 ;; asdf.el : https://github.com/tabfugnic/asdf.el
 (use-package asdf
   :ensure t
@@ -246,78 +292,116 @@
   :config
   (asdf-enable))
 
+;; which-key : https://github.com/justbur/emacs-which-key
+(use-package which-key
+  :diminish which-key-mode
+  :straight (which-key :type git :host github :repo "justbur/emacs-which-key")
+  :config
+  (which-key-mode))
+
 ;; lsp-mode : https://emacs-lsp.github.io/lsp-mode
 (use-package lsp-mode
+  :commands (lsp lsp-deferred)
+  :after asdf
+  :diminish (lsp-mode . "LSP")
   :straight (lsp-mode :type git :host github :repo "emacs-lsp/lsp-mode")
-  :init
-  (setq lsp-keymap-prefix "C-c l")
-  :hook (
-         (enh-ruby-mode . lsp))
-  :commands lsp)
+  :bind (:map lsp-mode-map)
+  :config
+  (defun my/ruby-set-gemfile-local ()
+    (let ((local-gemfile (concat (lsp-workspace-root) "/Gemfile.local")))
+      (when (file-exists-p local-gemfile)
+        (setenv "BUNDLE_GEMFILE" local-gemfile))))
+  
+  ;; register Sorbet
+  (lsp-register-client
+   (make-lsp-client :new-connection (lsp-stdio-connection (lambda ()
+                                                            '("bundle" "exec"
+							      "srb" "typecheck"
+							      "--lsp" "--disable-watchman")))
+                    :major-modes '(ruby-mode)
+                    :server-id 'sorbet))
+  :custom
+  (lsp-solargraph-multi-root t)
+  (lsp-solargraph-autoformat t)
+  (lsp-solargraph-completion t)
+  (lsp-solargraph-use-bundler t)
+  (lsp-solargraph-library-directories
+   '("~/.asdf/"))
+  
+  :hook ((ruby-mode . my/ruby-set-gemfile-local)
+	 (ruby-mode . lsp-deferred)
+	 (lsp-mode . lsp-enable-which-key-integration))
+  :init)
 
+;; lsp-ui : https://emacs-lsp.github.io/lsp-ui
+(use-package lsp-ui
+  :commands lsp-ui
+  :straight (lsp-ui :type git :host github :repo "emacs-lsp/lsp-ui")
+  :hook (lsp-mode . lsp-ui-mode)
+  :after lsp-mode)
+
+;; eglot : default in Emacs 29
+(use-package eglot
+  :ensure t
+  :after lsp-mode)
+  
 ;; company-mode : https://github.com/company-mode/company-mode
 (use-package company
   :ensure t
   :straight (company :type git :host github :repo "company-mode/company-mode")
+  :after (lsp-mode eglot)
+  :hook ((lsp-mode . company-mode)
+         (eglot-managed-mode . company-mode))
   :config
   (setq company-minimum-prefix-length 1
         company-idle-delay 0.0))
 
-;; Enhanced Ruby Mode : https://github.com/zenspider/Enhanced-Ruby-Mode
-(use-package enh-ruby-mode
-  :ensure t
-  :straight (enh-ruby-mode :type git :host github :repo "zenspider/Enhanced-Ruby-Mode")
+(use-package ruby-mode
+  :after (lsp-mode eglot company)
+  :straight (:type built-in)
   :config
-  (defun my/ruby-mode-hook ()
-    (add-hook 'before-save-hook 'my/ruby-mode-before-save nil t))
-
-  (defun my/tab-indent-or-complete ()
-    "Indent the current line or trigger completion."
-    (interactive)
-    (if (or (use-region-p) (looking-back "^\\s-*"))
-        (indent-for-tab-command) ; If no region is active or at the beginning of a line, just indent
-      (company-indent-or-complete-common))) ; Otherwise, trigger completion
-
-  (defun my/ruby-mode-before-save ()
-    (when (eq major-mode 'enh-ruby-mode)
-      (indent-region (point-min) (point-max) nil)))
-  :bind
-  (:map enh-ruby-mode-map
-        ("<tab>" . my/tab-indent-or-complete))
-  :init
-  (add-hook 'enh-ruby-mode-hook 'my/ruby-mode-hook)
-  (add-hook 'enh-ruby-mode-hook 'company-mode)
-  :mode (("\\.rb\\'" . enh-ruby-mode)
-         ("Gemfile\\'" . enh-ruby-mode)
-         ("Rakefile\\'" . enh-ruby-mode)
-         ("\\.rake\\'" . enh-ruby-mode)
-         ("\\.ru\\'" . enh-ruby-mode)))
+  (defun my-ruby-mode-setup ()
+    (setq-local company-backends '((company-capf company-dabbrev-code company-treesitter))))  
+  :hook ((ruby-mode . my-ruby-mode-setup)
+	 (ruby-mode . aggressive-indent-mode)
+	 (ruby-mode . tree-sitter-hl-mode)
+	 (ruby-mode . eglot))
+  :custom
+  (ruby-insert-encoding-magic-comment nil "Not needed in Ruby 2")
+  :ensure-system-package (solargraph . "gem install solargraph"))
 
 ;; robe : https://github.com/dgutov/robe
 (use-package robe
   :ensure t
-  :after enh-ruby-mode
+  :after eglot
   :straight (robe :type git :host github :repo "dgutov/robe")
+  :bind (("<f2> <f2>" . robe-start)
+	 ("<f2> n" . robe-jump)
+	 ("<f2> m" . robe-jump-to-module))
   :init
-  (add-hook 'enh-ruby-mode-hook 'robe-mode)
-  (add-hook 'ruby-ts-mode-hook 'robe-mode)
-  (add-to-list 'company-backends 'company-robe))
+  (add-hook 'ruby-mode-hook 'robe-mode)
+  (add-hook 'ruby-ts-mode-hook 'robe-mode))
 
 ;; int-ruby : https://github.com/nonsequitur/inf-ruby
 (use-package inf-ruby
   :ensure t
-  :after enh-ruby-mode
+  :after ruby-mode
   :straight (inf-ruby :type git :host github :repo "nonsequitur/inf-ruby")
-  :config
-  (add-to-list 'inf-ruby-implementations '("pry" . "pry"))
-  (setq inf-ruby-default-implementation "pry")
-  (setq inf-ruby-first-prompt-pattern "^\\[[0-9]+\\] pry\\((.*)\\)> *")
-  (setq inf-ruby-prompt-pattern "^\\[[0-9]+\\] pry\\((.*)\\)[>*\"'] *")
-  :bind
-  (:map enh-ruby-mode-map
-        ("<f3> <f3>" . ruby-send-buffer))
   :init
-  (add-hook 'enh-ruby-mode-hook 'inf-ruby-minor-mode))
+  (add-hook 'ruby-mode-hook 'inf-ruby-minor-mode))
+
+(use-package tree-sitter
+  :ensure t
+  :config
+  (global-tree-sitter-mode)
+  (add-hook 'tree-sitter-after-on-hook #'tree-sitter-hl-mode))
+
+(use-package tree-sitter-langs
+  :ensure t
+  :after tree-sitter
+  :config
+  (tree-sitter-require 'ruby)
+  (add-to-list 'tree-sitter-major-mode-language-alist '(ruby-mode . ruby)))
 
 ;; smartparens : https://github.com/Fuco1/smartparens
 (use-package smartparens-mode
@@ -333,10 +417,7 @@
   :ensure t
   :straight (yasnippet :type git :host github :repo "joaotavora/yasnippet")
   :init
-  (add-hook 'prog-mode-hook #'yas-minor-mode)
-  :bind 
-  (:map yas-minor-mode-map
-        ("<tab>" . yas-expand)))
+  (add-hook 'prog-mode-hook #'yas-minor-mode))
 
 ;; yasnippet-snippets : https://github.com/AndreaCrotti/yasnippet-snippets
 (use-package yasnippet-snippets
@@ -379,13 +460,25 @@
 (use-package openai
   :straight (openai :type git :host github :repo "emacs-openai/openai")
   :config
-  (setq openai-key "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"))
+  (setq openai-key ""))
 
 ;; chatgpt : https://github.com/emacs-openai/chatgpt
 (use-package chatgpt
   :straight (chatgpt :type git :host github :repo "emacs-openai/chatgpt")
   :config
   (setq chatgpt-model "gpt-3.5-turbo"))
+
+;; copilot : https://github.com/copilot-emacs/copilot.el
+(use-package copilot
+  :straight (:host github :repo "copilot-emacs/copilot.el" :files ("dist" "*.el"))
+  :ensure t)
+
+;; editorconfig : https://github.com/editorconfig/editorconfig-emacs
+(use-package editorconfig
+  :ensure t
+  :straight (editorconfig :type git :host github :repo "editorconfig/editorconfig-emacs")
+  :config
+  (editorconfig-mode 1))
 
 (provide 'init)
 ;;; init.el ends here
