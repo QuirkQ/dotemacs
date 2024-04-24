@@ -5,48 +5,15 @@
 ; Quint his fantastic init.el
 
 ;;; Code:
-(setq inhibit-startup-message t)
-
-(scroll-bar-mode -1)        ; Disable visible scrollbar
-(tool-bar-mode -1)          ; Disable the toolbar
-(tooltip-mode -1)           ; Disable tooltips
-(set-fringe-mode 10)        ; Give some breathing room
-(menu-bar-mode -1)            ; Disable the menu bar
-
-;; Enable line numbers
-(column-number-mode)
-(global-display-line-numbers-mode t)
-
-;; Start in full screen
-(add-to-list 'default-frame-alist '(fullscreen . fullscreen))
-
-;; Always prefer UTF-8
-(prefer-coding-system 'utf-8-unix)
-(setq x-select-request-type
-    '(UTF8_STRING COMPOUND_TEXT TEXT STRING))
-
-;; Disable line numbers for some modes
-(dolist (mode '(org-mode-hook
-                term-mode-hook
-                shell-mode-hook
-		ibuffer-mode
-                treemacs-mode-hook
-                inf-ruby-mode-hook
-                vterm-mode-hook
-                eshell-mode-hook))
-  (add-hook mode (lambda () (display-line-numbers-mode 0))))
-
-;; Set up the visible bell
-(setq visible-bell t)
-
-;; Make ESC quit prompts
-(global-set-key (kbd "<escape>") 'keyboard-escape-quit)
 
 ;; Initialise straight.el : https://github.com/radian-software/straight.el
 (defvar bootstrap-version)
 (let ((bootstrap-file
-       (expand-file-name "straight/repos/straight.el/bootstrap.el" user-emacs-directory))
-      (bootstrap-version 6))
+       (expand-file-name
+        "straight/repos/straight.el/bootstrap.el"
+        (or (bound-and-true-p straight-base-dir)
+            user-emacs-directory)))
+      (bootstrap-version 7))
   (unless (file-exists-p bootstrap-file)
     (with-current-buffer
         (url-retrieve-synchronously
@@ -55,10 +22,24 @@
       (goto-char (point-max))
       (eval-print-last-sexp)))
   (load bootstrap-file nil 'nomessage))
+
+;; Configure straight.el to use use-package
 (straight-use-package 'use-package)
+
+;; Make use-package install packages with straight.el by default
 (setq straight-use-package-by-default t)
+
+;; Set the default Git protocol for straight.el
 (setq straight-vc-git-default-protocol 'ssh)
-(setq use-package-verbose nil) ;; use 't' to see execution profile at startup
+
+;; Control verbosity of use-package; set to 't' for detailed startup info
+(setq use-package-verbose nil)
+
+;; Start the emacs server when it isn't running
+(use-package server
+  :config
+  (unless (server-running-p)
+    (server-start)))
 
 ;; nerd-icons : https://github.com/rainstormstudio/nerd-icons.el
 (use-package nerd-icons
@@ -165,6 +146,13 @@
   :config
   (delete-selection-mode 1))
 
+;; move-text : https://github.com/emacsfodder/move-text
+(use-package move-text
+  :straight (move-text :type git :host github :repo "emacsfodder/move-text")
+  :bind
+  (("M-<up>" . move-text-up)
+   ("M-<down>" . move-text-down)))
+
 ;; ivy : https://github.com/abo-abo/swiper
 (use-package ivy
   :ensure t
@@ -186,7 +174,7 @@
   :ensure t
   :straight (counsel :type git :host github :repo "abo-abo/swiper")
   :bind (("M-x" . counsel-M-x)
-         ("C-x C-f" . counsel-find-file)
+         ("<f19> f" . counsel-find-file)
          ("C-c k" . counsel-ag)
 	 ("C-c j" . counsel-git-grep)
          ("<f1> f" . counsel-describe-function)
@@ -283,14 +271,11 @@
   :straight (hcl-mode :type git :host github :repo "hcl-emacs/hcl-mode")
   :mode ("\\.hcl\\'" . hcl-mode))
 
-;; asdf.el : https://github.com/tabfugnic/asdf.el
-(use-package asdf
-  :ensure t
-  :straight (asdf :type git :host github :repo "tabfugnic/asdf.el"
-                  :fork (:host github
-                         :repo "swkkrdswk/asdf.el"))
-  :config
-  (asdf-enable))
+;; go-mode.el : https://github.com/dominikh/go-mode.el
+(use-package go-mode
+  :straight (go-mode :type git :host github :repo "dominikh/go-mode.el")
+  :mode ("\\.go\\'" . go-mode)
+  :hook ((go-mode . lsp-deferred)))
 
 ;; which-key : https://github.com/justbur/emacs-which-key
 (use-package which-key
@@ -307,30 +292,33 @@
   :straight (lsp-mode :type git :host github :repo "emacs-lsp/lsp-mode")
   :bind (:map lsp-mode-map)
   :config
-  (defun my/ruby-set-gemfile-local ()
-    (let ((local-gemfile (concat (lsp-workspace-root) "/Gemfile.local")))
-      (when (file-exists-p local-gemfile)
-        (setenv "BUNDLE_GEMFILE" local-gemfile))))
+  ;; register rust lsp + tramp
+  (with-eval-after-load "lsp-rust"
+    (lsp-register-client
+     (make-lsp-client
+      :new-connection (lsp-stdio-connection
+                       (lambda ()
+			 `(,(or (executable-find
+				 (cl-first lsp-rust-analyzer-server-command))
+				(lsp-package-path 'rust-analyzer)
+				"rust-analyzer")
+                           ,@(cl-rest lsp-rust-analyzer-server-args))))
+      :remote? t
+      :major-modes '(rust-mode rustic-mode)
+      :initialization-options 'lsp-rust-analyzer--make-init-options
+      :notification-handlers (ht<-alist lsp-rust-notification-handlers)
+      :action-handlers (ht ("rust-analyzer.runSingle" #'lsp-rust--analyzer-run-single))
+      :library-folders-fn (lambda (_workspace) lsp-rust-library-directories)
+      :after-open-fn (lambda ()
+                       (when lsp-rust-analyzer-server-display-inlay-hints
+			 (lsp-rust-analyzer-inlay-hints-mode)))
+      :ignore-messages nil
+      :server-id 'rust-analyzer-remote)))
   
-  ;; register Sorbet
-  (lsp-register-client
-   (make-lsp-client :new-connection (lsp-stdio-connection (lambda ()
-                                                            '("bundle" "exec"
-							      "srb" "typecheck"
-							      "--lsp" "--disable-watchman")))
-                    :major-modes '(ruby-mode)
-                    :server-id 'sorbet))
   :custom
-  (lsp-solargraph-multi-root t)
-  (lsp-solargraph-autoformat t)
-  (lsp-solargraph-completion t)
-  (lsp-solargraph-use-bundler t)
-  (lsp-solargraph-library-directories
-   '("~/.asdf/"))
+  (lsp-inlay-hint-enable t)
   
-  :hook ((ruby-mode . my/ruby-set-gemfile-local)
-	 (ruby-mode . lsp-deferred)
-	 (lsp-mode . lsp-enable-which-key-integration))
+  :hook ((lsp-mode . lsp-enable-which-key-integration))
   :init)
 
 ;; lsp-ui : https://emacs-lsp.github.io/lsp-ui
@@ -339,48 +327,61 @@
   :straight (lsp-ui :type git :host github :repo "emacs-lsp/lsp-ui")
   :hook (lsp-mode . lsp-ui-mode)
   :after lsp-mode)
-
-;; eglot : default in Emacs 29
-(use-package eglot
-  :ensure t
-  :after lsp-mode)
   
 ;; company-mode : https://github.com/company-mode/company-mode
 (use-package company
   :ensure t
   :straight (company :type git :host github :repo "company-mode/company-mode")
-  :after (lsp-mode eglot)
-  :hook ((lsp-mode . company-mode)
-         (eglot-managed-mode . company-mode))
+  :hook ((prog-mode . company-mode))
   :config
   (setq company-minimum-prefix-length 1
-        company-idle-delay 0.0))
+        company-idle-delay 0.0)
+  :init
+  (global-company-mode 1))
 
 (use-package ruby-mode
-  :after (lsp-mode eglot company)
+  :after (company)
   :straight (:type built-in)
   :config
+  (defun mise-enable ()
+    "Setup mise for environment by adding its shims directory to exec-path and PATH."
+    (interactive)
+    (let ((mise-path "/Users/quint.pieters/.local/share/mise/shims"))
+      ;; Add to exec-path if not already included
+      (unless (member mise-path exec-path)
+	(setq exec-path (cons mise-path exec-path)))
+    
+      ;; Add to PATH environment variable if not already included
+      (unless (string-match-p (regexp-quote mise-path) (getenv "PATH"))
+	(setenv "PATH" (concat mise-path ":" (getenv "PATH"))))))
+
   (defun my-ruby-mode-setup ()
-    (setq-local company-backends '((company-capf company-dabbrev-code company-treesitter))))  
+    (setq-local company-backends '((company-capf company-robe company-dabbrev-code company-treesitter))))
+
+  (defun insert-ruby-debug-statement ()
+    "Inserts 'require 'pry'; binding.pry' at the current cursor position."
+    (interactive)
+    (insert "require 'pry'; binding.pry"))
+
+  (define-key ruby-mode-map (kbd "<f19> b") 'insert-ruby-debug-statement)
+
   :hook ((ruby-mode . my-ruby-mode-setup)
 	 (ruby-mode . aggressive-indent-mode)
-	 (ruby-mode . tree-sitter-hl-mode)
-	 (ruby-mode . eglot))
-  :custom
-  (ruby-insert-encoding-magic-comment nil "Not needed in Ruby 2")
-  :ensure-system-package (solargraph . "gem install solargraph"))
+         (ruby-mode . mise-enable)))
 
 ;; robe : https://github.com/dgutov/robe
 (use-package robe
   :ensure t
-  :after eglot
   :straight (robe :type git :host github :repo "dgutov/robe")
-  :bind (("<f2> <f2>" . robe-start)
-	 ("<f2> n" . robe-jump)
-	 ("<f2> m" . robe-jump-to-module))
-  :init
-  (add-hook 'ruby-mode-hook 'robe-mode)
-  (add-hook 'ruby-ts-mode-hook 'robe-mode))
+  :config
+  (defun my/start-robe ()
+    (interactive)
+    (robe-start)
+    (company-mode 1))
+  :bind (("<f2> <f2>" . my/start-robe)
+	 ("<f19> n" . robe-jump)
+	 ("<f19> m" . robe-jump-to-module))
+  :hook ((ruby-mode . robe-mode)))
 
 ;; int-ruby : https://github.com/nonsequitur/inf-ruby
 (use-package inf-ruby
@@ -393,15 +394,15 @@
 (use-package tree-sitter
   :ensure t
   :config
-  (global-tree-sitter-mode)
-  (add-hook 'tree-sitter-after-on-hook #'tree-sitter-hl-mode))
+  (global-tree-sitter-mode))
 
 (use-package tree-sitter-langs
   :ensure t
   :after tree-sitter
   :config
   (tree-sitter-require 'ruby)
-  (add-to-list 'tree-sitter-major-mode-language-alist '(ruby-mode . ruby)))
+  (add-to-list 'tree-sitter-major-mode-language-alist '(ruby-mode . ruby))
+  :hook ((ruby-mode . tree-sitter-hl-mode)))
 
 ;; smartparens : https://github.com/Fuco1/smartparens
 (use-package smartparens-mode
@@ -435,7 +436,8 @@
 ;; multi-vterm : https://github.com/suonlight/multi-vterm
 (use-package multi-vterm
     :ensure t
-    :straight (multi-vterm :type git :host github :repo "suonlight/multi-vterm"))
+    :straight (multi-vterm :type git :host github :repo "suonlight/multi-vterm")
+    :bind (("<f19> t" . multi-vterm)))
 
 ;; eterm-256color : https://github.com/dieggsy/eterm-256color
 (use-package eterm-256color
@@ -460,18 +462,23 @@
 (use-package openai
   :straight (openai :type git :host github :repo "emacs-openai/openai")
   :config
+  (setq org-id "")
   (setq openai-key ""))
 
 ;; chatgpt : https://github.com/emacs-openai/chatgpt
 (use-package chatgpt
   :straight (chatgpt :type git :host github :repo "emacs-openai/chatgpt")
   :config
-  (setq chatgpt-model "gpt-3.5-turbo"))
+  (setq chatgpt-model "gpt-4"))
 
 ;; copilot : https://github.com/copilot-emacs/copilot.el
 (use-package copilot
+  :ensure t
   :straight (:host github :repo "copilot-emacs/copilot.el" :files ("dist" "*.el"))
-  :ensure t)
+  :bind (("<f1> <f1>" . copilot-mode)
+	 ("<f19> z" . copilot-previous-completion)
+	 ("<f19> x" . copilot-next-completion)
+	 ("<f19> a" . copilot-accept-completion)))
 
 ;; editorconfig : https://github.com/editorconfig/editorconfig-emacs
 (use-package editorconfig
@@ -479,6 +486,61 @@
   :straight (editorconfig :type git :host github :repo "editorconfig/editorconfig-emacs")
   :config
   (editorconfig-mode 1))
+
+;; rustic : https://github.com/brotzeit/rustic
+(use-package rustic
+  :after (lsp-mode company)
+  :straight (rustic :type git :host github :repo "brotzeit/rustic")
+  :config
+  (setq exec-path (append exec-path (list (expand-file-name "~/.cargo/bin"))))
+  (setq rustic-format-trigger 'on-save)
+  (setq rustic-lsp-client 'lsp-mode)
+  (defun my-rustic-mode-setup ()
+    (setq-local company-backends '((company-capf company-dabbrev-code company-treesitter)))))
+
+;; My own custom configuration
+(use-package emacs
+  :config
+  (setq inhibit-startup-message t)
+
+  (scroll-bar-mode -1)        ; Disable visible scrollbar
+  (tool-bar-mode -1)          ; Disable the toolbar
+  (tooltip-mode -1)           ; Disable tooltips
+  (set-fringe-mode 10)        ; Give some breathing room
+  (menu-bar-mode -1)            ; Disable the menu bar
+
+  ;; Enable line numbers
+  (column-number-mode)
+  (global-display-line-numbers-mode t)
+
+  ;; Disable line numbers for some modes
+  (dolist (mode '(org-mode-hook
+                term-mode-hook
+                shell-mode-hook
+		ibuffer-mode
+                treemacs-mode-hook
+                inf-ruby-mode-hook
+                vterm-mode-hook
+                eshell-mode-hook))
+  (add-hook mode (lambda () (display-line-numbers-mode 0))))
+
+  ;; Always prefer UTF-8
+  (prefer-coding-system 'utf-8-unix)
+  (setq x-select-request-type
+	'(UTF8_STRING COMPOUND_TEXT TEXT STRING))
+
+  ;; Set up the visible bell
+  (setq visible-bell t)
+
+  ;; Make ESC quit prompts
+  (global-set-key (kbd "<escape>") 'keyboard-escape-quit)
+
+  ;; Start in full screen
+  (add-to-list 'default-frame-alist '(fullscreen . fullscreen))
+
+  (keymap-global-set "s-/" 'comment-or-uncomment-region)
+  (keymap-global-set "<f19> <left>" 'previous-buffer)
+  (keymap-global-set "<f19> <right>" 'next-buffer))
 
 (provide 'init)
 ;;; init.el ends here
