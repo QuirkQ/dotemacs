@@ -540,7 +540,10 @@
 
   (keymap-global-set "s-/" 'comment-or-uncomment-region)
   (keymap-global-set "<f19> <left>" 'previous-buffer)
-  (keymap-global-set "<f19> <right>" 'next-buffer))
+  (keymap-global-set "<f19> <right>" 'next-buffer)
+  (keymap-global-set "<f19> r" 'kmacro-start-macro)
+  (keymap-global-set "<f19> e" 'kmacro-end-macro)
+  (keymap-global-set "<f19> SPC" 'kmacro-end-or-call-macro))
 
 (provide 'init)
 ;;; init.el ends here
