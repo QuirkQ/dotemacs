@@ -6,6 +6,9 @@
 
 ;;; Code:
 
+(defconst my-emacs-dir (expand-file-name user-emacs-directory)
+  "The path to the emacs.d directory.")
+
 ;; Initialise straight.el : https://github.com/radian-software/straight.el
 (defvar bootstrap-version)
 (let ((bootstrap-file
@@ -34,6 +37,19 @@
 
 ;; Control verbosity of use-package; set to 't' for detailed startup info
 (setq use-package-verbose nil)
+
+;; Add Brew to my Emacs PATH
+(setenv "PATH" (concat (getenv "PATH") ":/opt/homebrew/bin"))
+(add-to-list 'exec-path "/opt/homebrew/bin")
+
+;; Add Docker to Emacs PATH
+(setenv "PATH" (concat (getenv "PATH") ":/Users/quint.pieters/.docker/bin"))
+(add-to-list 'exec-path "/Users/quint.pieters/.docker/bin")
+
+;; mise - https://github.com/liuyinz/mise.el
+(use-package mise
+  :straight (mise :type git :host github :repo "liuyinz/mise.el")
+  :init (add-hook 'after-init-hook #'global-mise-mode))
 
 ;; Start the emacs server when it isn't running
 (use-package server
@@ -174,9 +190,10 @@
   :ensure t
   :straight (counsel :type git :host github :repo "abo-abo/swiper")
   :bind (("M-x" . counsel-M-x)
-         ("<f19> f" . counsel-find-file)
+         ("C-c f" . counsel-find-file)
          ("C-c k" . counsel-ag)
-	 ("C-c j" . counsel-git-grep)
+	 ("<f19> d" . counsel-git)
+	 ("<f19> f" . counsel-git-grep)
          ("<f1> f" . counsel-describe-function)
          ("<f1> v" . counsel-describe-variable)
          ("<f1> l" . counsel-find-library)
@@ -224,11 +241,75 @@
 (use-package flycheck
   :ensure t
   :straight (flycheck :type git :host github :repo "flycheck/flycheck")
-  :init
-  (add-hook 'after-init-hook #'global-flycheck-mode)
   :config
+  ;; Inherit Emacs Lisp load path
   (setq flycheck-emacs-lisp-load-path 'inherit)
-  (global-flycheck-mode t))
+
+  ;; Disable Flycheck globally
+  (global-flycheck-mode -1)
+
+  ;; Define the configuration file variable for standardrb
+  (flycheck-def-config-file-var flycheck-standardrbrc ruby-standardrb ".standard.yml"
+    :safe #'stringp)
+
+  ;; Define the lint-only option variable for standardrb
+  (flycheck-def-option-var flycheck-standardrb-lint-only nil ruby-standardrb
+    "Whether to only report code issues in Standardrb.
+
+  When non-nil, only report code issues in Standardrb, via `--lint'.
+  Otherwise report style issues as well."
+    :safe #'booleanp
+    :type 'boolean)
+
+  ;; Define Flycheck checker for standardrb
+  (flycheck-define-checker ruby-standardrb
+    "A Ruby syntax and style checker using the standardrb gem."
+    :command ("standardrb"
+              "--display-cop-names"
+              "--force-exclusion"
+              "--format" "emacs"
+              "--cache" "false"
+              (config-file "--config" flycheck-standardrbrc)
+              (option-flag "--lint" flycheck-standardrb-lint-only)
+              "--stdin" source-original)
+    :standard-input t
+    :working-directory flycheck-ruby--find-project-root
+    :error-patterns
+    ((info line-start (file-name) ":" line ":" column ": C: "
+           (optional (id (one-or-more (not (any ":")))) ": ") (message) line-end)
+     (warning line-start (file-name) ":" line ":" column ": W: "
+              (optional (id (one-or-more (not (any ":")))) ": ") (message)
+              line-end)
+     (error line-start (file-name) ":" line ":" column ": " (or "E" "F") ": "
+            (optional (id (one-or-more (not (any ":")))) ": ") (message)
+            line-end))
+    :modes (ruby-mode)
+    :next-checkers ())
+
+  ;; Ensure the globally installed standardrb is used
+  (setq flycheck-ruby-standard-executable "standardrb")
+
+  ;; Enable Flycheck and select the standardrb checker in ruby-mode
+  :hook ((ruby-mode . flycheck-mode)
+         (ruby-mode . (lambda ()
+                        (flycheck-select-checker 'ruby-standardrb)))))
+
+;; format-all : https://github.com/lassik/emacs-format-all-the-code
+(use-package format-all
+  :ensure t
+  :straight (format-all :type git :host github :repo "lassik/emacs-format-all-the-code")
+  :config
+  (setq format-all-formatters
+	'(("Ruby" (standardrb))))
+
+  ;; Ensure formatter is properly set on every new Ruby buffer
+  (defun my/format-all-set-ruby-formatter ()
+    (setq-local format-all-formatters
+                '(("Ruby" (standardrb)))))
+
+  :hook ((ruby-mode . format-all-mode)
+	 (ruby-mode . my/format-all-set-ruby-formatter)
+         (format-all-mode . format-all-ensure-formatter)))  ; Ensure formatter is set
 
 ;; CSV-mode : [built-in]
 (use-package csv-mode
@@ -261,15 +342,23 @@
    ("\\.groovy\\'" . groovy-mode)))
 
 ;; Python major mode : https://gitlab.com/python-mode-devs/python-mode
-(use-package python-mode
-  :straight (python-mode :type git :host gitlab :repo "python-mode-devs/python-mode")
-  :mode ("\\.py\\'" . python-mode)
-  :interpreter ("python" . python-mode))
+;; (use-package python-mode
+;;   :straight (python-mode :type git :host gitlab :repo "python-mode-devs/python-mode")
+;;   :mode ("\\.py\\'" . python-mode)
+;;   :interpreter ("python" . python-mode))
 
 ;; Hashicorp HCL mode : https://github.com/hcl-emacs/hcl-mode
 (use-package hcl-mode
   :straight (hcl-mode :type git :host github :repo "hcl-emacs/hcl-mode")
   :mode ("\\.hcl\\'" . hcl-mode))
+
+;; kotlin-mode : https://github.com/Emacs-Kotlin-Mode-Maintainers/kotlin-mode
+(use-package kotlin-mode
+  :straight (kotlin-mode :type git :host github :repo "Emacs-Kotlin-Mode-Maintainers/kotlin-mode")
+  :mode ("\\.kt\\'" . kotlin-mode)
+  :hook (
+      (kotlin-mode . lsp-deferred)
+      (kotlin-mode . company-mode)))
 
 ;; go-mode.el : https://github.com/dominikh/go-mode.el
 (use-package go-mode
@@ -314,10 +403,12 @@
 			 (lsp-rust-analyzer-inlay-hints-mode)))
       :ignore-messages nil
       :server-id 'rust-analyzer-remote)))
-  
+
+  (setq lsp-clients-kotlin-server-executable "kotlin-language-server")
+
   :custom
   (lsp-inlay-hint-enable t)
-  
+
   :hook ((lsp-mode . lsp-enable-which-key-integration))
   :init)
 
@@ -327,7 +418,7 @@
   :straight (lsp-ui :type git :host github :repo "emacs-lsp/lsp-ui")
   :hook (lsp-mode . lsp-ui-mode)
   :after lsp-mode)
-  
+
 ;; company-mode : https://github.com/company-mode/company-mode
 (use-package company
   :ensure t
@@ -350,13 +441,13 @@
       ;; Add to exec-path if not already included
       (unless (member mise-path exec-path)
 	(setq exec-path (cons mise-path exec-path)))
-    
+
       ;; Add to PATH environment variable if not already included
       (unless (string-match-p (regexp-quote mise-path) (getenv "PATH"))
 	(setenv "PATH" (concat mise-path ":" (getenv "PATH"))))))
 
   (defun my-ruby-mode-setup ()
-    (setq-local company-backends '((company-capf company-robe company-dabbrev-code company-treesitter))))
+    (setq-local company-backends '((company-capf company-robe company-dabbrev-code))))
 
   (defun insert-ruby-debug-statement ()
     "Inserts 'require 'pry'; binding.pry' at the current cursor position."
@@ -365,9 +456,13 @@
 
   (define-key ruby-mode-map (kbd "<f19> b") 'insert-ruby-debug-statement)
 
+  (define-key ruby-mode-map (kbd "M-<right>") 'ruby-forward-sexp)
+  (define-key ruby-mode-map (kbd "M-<left>") 'ruby-backward-sexp)
+  (define-key ruby-mode-map (kbd "M-<up>") 'ruby-beginning-of-block)
+  (define-key ruby-mode-map (kbd "M-<down>") 'ruby-end-of-block)
+
   :hook ((ruby-mode . my-ruby-mode-setup)
-	 (ruby-mode . aggressive-indent-mode)
-         (ruby-mode . mise-enable)))
+	 (ruby-mode . mise-enable)))
 
 ;; robe : https://github.com/dgutov/robe
 (use-package robe
@@ -413,37 +508,6 @@
   ;; load default config
   (require 'smartparens-config))
 
-;; yasnippet : https://github.com/joaotavora/yasnippet
-(use-package yasnippet
-  :ensure t
-  :straight (yasnippet :type git :host github :repo "joaotavora/yasnippet")
-  :init
-  (add-hook 'prog-mode-hook #'yas-minor-mode))
-
-;; yasnippet-snippets : https://github.com/AndreaCrotti/yasnippet-snippets
-(use-package yasnippet-snippets
-  :ensure t
-  :straight (yasnippet-snippets :type git :host github :repo "AndreaCrotti/yasnippet-snippets"))
-
-;; vterm : https://github.com/akermu/emacs-libvterm
-(use-package vterm
-    :ensure t
-    :straight (vterm :type git :host github :repo "akermu/emacs-libvterm")
-    :config
-    (setq vterm-shell "/opt/homebrew/bin/fish")
-    (setq vterm-always-compile-module t))
-
-;; multi-vterm : https://github.com/suonlight/multi-vterm
-(use-package multi-vterm
-    :ensure t
-    :straight (multi-vterm :type git :host github :repo "suonlight/multi-vterm")
-    :bind (("<f19> t" . multi-vterm)))
-
-;; eterm-256color : https://github.com/dieggsy/eterm-256color
-(use-package eterm-256color
-  :ensure t
-  :straight (eterm-256color :type git :host github :repo "dieggsy/eterm-256color"))
-
 ;; docker.el : https://github.com/Silex/docker.el
 (use-package docker
   :ensure t
@@ -469,7 +533,7 @@
 (use-package chatgpt
   :straight (chatgpt :type git :host github :repo "emacs-openai/chatgpt")
   :config
-  (setq chatgpt-model "gpt-4"))
+  (setq chatgpt-model "gpt-4o"))
 
 ;; copilot : https://github.com/copilot-emacs/copilot.el
 (use-package copilot
@@ -496,7 +560,162 @@
   (setq rustic-format-trigger 'on-save)
   (setq rustic-lsp-client 'lsp-mode)
   (defun my-rustic-mode-setup ()
-    (setq-local company-backends '((company-capf company-dabbrev-code company-treesitter)))))
+    (setq-local company-backends '((company-capf company-dabbrev-code)))))
+
+;; ================================================================================
+;; BEGIN ESHELL
+;; ================================================================================
+
+;; capf-autosuggest - https://github.com/emacsmirror/capf-autosuggest
+(use-package capf-autosuggest
+  :straight (capf-autosuggest :type git :host github :repo "emacsmirror/capf-autosuggest")
+  :hook
+  (eshell-mode . capf-autosuggest-mode))
+
+;; eshell - build-in
+(use-package eshell
+  :ensure nil  ; Eshell is built-in, so no need to install
+  :init
+  ;; Set Eshell directory and history paths
+  (setq eshell-directory-name (concat my-emacs-dir "eshell/")
+        eshell-history-file-name (concat my-emacs-dir "eshell/history")
+        eshell-aliases-file (concat my-emacs-dir "eshell/alias")
+        eshell-last-dir-ring-file-name (concat my-emacs-dir "eshell/lastdir")
+        eshell-banner-message "")
+
+  ;; Eshell settings
+  (setq eshell-highlight-prompt nil
+        eshell-buffer-shorthand t
+        eshell-cmpl-ignore-case t
+        eshell-cmpl-cycle-completions t
+        eshell-destroy-buffer-when-process-dies t
+        eshell-history-size 10000
+        eshell-save-history-on-exit t
+        eshell-hist-ignoredups t
+        eshell-buffer-maximum-lines 20000
+        eshell-error-if-no-glob t
+        eshell-glob-case-insensitive t
+        eshell-scroll-to-bottom-on-input 'all
+        eshell-scroll-to-bottom-on-output 'all
+        eshell-list-files-after-cd t)
+
+  ;; Visual commands
+  (setq eshell-visual-commands '("ranger" "vi" "screen" "top" "less" "more" "lynx"
+                                 "ncftp" "pine" "tin" "trn" "elm" "vim"
+                                 "nmtui" "alsamixer" "htop" "el" "elinks")
+        eshell-visual-subcommands '(("git" "log" "diff" "show")))
+
+  ;; Set the font for icons
+  (set-fontset-font t 'unicode (font-spec :family "Symbols Nerd Font Mono") nil 'prepend)
+
+  ;; Define macros for prompt customization
+  (defmacro with-face (str &rest props)
+    "Return STR propertized with PROPS."
+    `(propertize ,str 'face (list ,@props)))
+
+  (defmacro esh-section (name icon form &rest props)
+    "Build eshell section NAME with ICON prepended to evaled FORM with PROPS."
+    `(setq ,name
+           (lambda () (when ,form
+                        (-> ,icon
+                            (concat esh-section-delim ,form)
+                            (with-face ,@props))))))
+
+  ;; Define the accumulator function before it's used
+  (defun esh-acc (acc x)
+    "Accumulator for evaluating and concatenating esh-sections."
+    (--if-let (funcall x)
+        (if (s-blank? acc)
+            it
+          (concat acc esh-sep it))
+      acc))
+
+  ;; Custom function to get the current Git branch name
+  (defun get-git-branch-name ()
+    "Retrieve the current Git branch name."
+    (let ((branch (vc-git--symbolic-ref (eshell/pwd))))
+      (when branch
+        (string-trim branch))))
+
+  ;; Define sections with nerd-icons
+  (esh-section esh-dir
+               (nerd-icons-icon-for-dir (eshell/pwd))
+               (abbreviate-file-name (eshell/pwd))
+               '(:foreground "gold"))
+
+  (esh-section esh-git
+               (nerd-icons-devicon "nf-dev-git")
+               (get-git-branch-name)
+               '(:foreground "pink"))
+
+  (esh-section esh-clock
+               (nerd-icons-mdicon "nf-md-clock")
+               (format-time-string "%H:%M" (current-time))
+               '(:foreground "forest green"))
+
+  (esh-section esh-num
+               (nerd-icons-mdicon "nf-md-format_list_numbered")
+               (number-to-string esh-prompt-num)
+               '(:foreground "brown"))
+
+  ;; Separator between esh-sections
+  (setq esh-sep "  ")  ; or " | "
+  (setq esh-section-delim " ")
+
+  ;; Eshell prompt header
+  (setq esh-header "\n")  ; Adds a newline before the prompt
+
+  ;; Eshell prompt regexp and string
+  (setq eshell-prompt-regexp "^└─> ")  ; Matches the prompt string
+  (setq eshell-prompt-string "└─> ")   ; Sets the prompt arrow
+
+  ;; Choose which eshell-funcs to enable
+  (setq eshell-funcs (list esh-dir esh-git esh-clock esh-num))
+
+  ;; Define the eshell prompt function
+  (defun esh-prompt-func ()
+    "Build `eshell-prompt-function'."
+    (concat esh-header
+            (-reduce-from 'esh-acc "" eshell-funcs)
+            "\n"
+            eshell-prompt-string))
+
+  ;; Enable the new eshell prompt
+  (setq eshell-prompt-function 'esh-prompt-func)
+
+  :config
+  ;; Function to clear Eshell buffer
+  (defun eshell-clear-buffer ()
+    "Clear terminal."
+    (interactive)
+    (let ((inhibit-read-only t))
+      (erase-buffer)
+      (eshell-send-input)))
+
+  ;; Add hook to set key binding for clearing Eshell
+  (add-hook 'eshell-mode-hook
+            (lambda ()
+              (local-set-key (kbd "C-l") 'eshell-clear-buffer)))
+
+  ;; Function to open magit-status for the current directory
+  (defun eshell/magit ()
+    "Function to open magit-status for the current directory."
+    (interactive)
+    (require 'magit)
+    (magit-status-setup-buffer default-directory)
+    nil)
+
+  ;; Implement a "prompt number" section
+  (setq esh-prompt-num 0)
+
+  (add-hook 'eshell-exit-hook (lambda () (setq esh-prompt-num 0)))
+
+  (advice-add 'eshell-send-input :before
+              (lambda (&rest args) (setq esh-prompt-num (cl-incf esh-prompt-num)))))
+
+;; ================================================================================
+;; END ESHELL
+;; ================================================================================
 
 ;; My own custom configuration
 (use-package emacs
@@ -529,6 +748,14 @@
   (setq x-select-request-type
 	'(UTF8_STRING COMPOUND_TEXT TEXT STRING))
 
+  ;; Always delete trailing whitespaces before save
+  (add-hook 'before-save-hook 'delete-trailing-whitespace)
+
+  ;; Restore early-init gb collect settings
+  (add-hook 'after-init-hook #'(lambda ()
+                               ;; restore after startup
+                               (setq gc-cons-threshold 800000)))
+
   ;; Set up the visible bell
   (setq visible-bell t)
 
@@ -536,9 +763,10 @@
   (global-set-key (kbd "<escape>") 'keyboard-escape-quit)
 
   ;; Start in full screen
-  (add-to-list 'default-frame-alist '(fullscreen . fullscreen))
+  ; (add-to-list 'default-frame-alist '(fullscreen . fullscreen))
 
-  (keymap-global-set "s-/" 'comment-or-uncomment-region)
+  (keymap-global-set "s-/" 'format-all-region-or-buffer)
+  (keymap-global-set "M-/" 'comment-or-uncomment-region)
   (keymap-global-set "<f19> <left>" 'previous-buffer)
   (keymap-global-set "<f19> <right>" 'next-buffer)
   (keymap-global-set "<f19> r" 'kmacro-start-macro)
@@ -547,5 +775,3 @@
 
 (provide 'init)
 ;;; init.el ends here
-
-
