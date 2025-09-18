@@ -1,4 +1,4 @@
-;;; package --- init.el
+;;; init.el --- Quint's Emacs Configuration -*- lexical-binding: t -*-
 
 ;;; Commentary:
 
@@ -49,7 +49,27 @@
 ;; mise - https://github.com/liuyinz/mise.el
 (use-package mise
   :straight (mise :type git :host github :repo "liuyinz/mise.el")
-  :init (add-hook 'after-init-hook #'global-mise-mode))
+  :hook ((after-init . global-mise-mode)
+         (find-file . my/mise-activate-for-ruby-project)
+         (ruby-ts-mode . my/mise-activate-for-ruby-project)
+         (ruby-mode . my/mise-activate-for-ruby-project))
+  :config
+  ;; Automatically activate mise in project directories
+  (setq mise-auto-activate t)
+  ;; Enable more aggressive mise environment updates
+  (setq mise-cache-env t)
+
+  ;; Force mise activation for Ruby files using git project root
+  (defun my/mise-activate-for-ruby-project ()
+    "Activate mise for the current Ruby file's git project root."
+    (when (and buffer-file-name
+               (derived-mode-p 'ruby-ts-mode 'ruby-mode))
+      (when-let* ((project-root (or (vc-root-dir)
+                                    (and (fboundp 'project-root)
+                                         (project-root (project-current))))))
+        ;; Set default-directory to project root and activate mise
+        (let ((default-directory project-root))
+          (mise-mode 1))))))
 
 ;; Start the emacs server when it isn't running
 (use-package server
@@ -75,7 +95,7 @@
   ;; Global settings (defaults)
   (setq doom-themes-enable-bold t    ; if nil, bold is universally disabled
         doom-themes-enable-italic t) ; if nil, italics is universally disabled
-  (load-theme 'doom-one t)
+  (load-theme 'doom-moonlight t)
 
   ;; Enable flashing mode-line on errors
   (doom-themes-visual-bell-config))
@@ -84,7 +104,15 @@
 (use-package doom-modeline
   :ensure t
   :straight (doom-modeline :type git :host github :repo "seagle0128/doom-modeline")
-  :hook (after-init . doom-modeline-mode))
+  :hook ((after-init . doom-modeline-mode)
+         (ruby-ts-mode . (lambda ()
+                           (run-with-idle-timer 0.1 nil #'force-mode-line-update)))
+         (ruby-mode . (lambda ()
+                        (run-with-idle-timer 0.1 nil #'force-mode-line-update))))
+  :config
+  ;; Enable environment version display
+  (setq doom-modeline-env-version t)
+  (setq doom-modeline-env-enable-ruby t))
 
 ;; treemacs : https://github.com/Alexander-Miller/treemacs
 (use-package treemacs
@@ -137,12 +165,10 @@
   :ensure t
   :after ibuffer
   :straight (ibuffer-vc :type git :host github :repo "purcell/ibuffer-vc")
-  :config
-  (add-hook 'ibuffer-hook
-            (lambda ()
-              (ibuffer-vc-set-filter-groups-by-vc-root)
-              (unless (eq ibuffer-sorting-mode 'alphabetic)
-                (ibuffer-do-sort-by-alphabetic)))))
+  :hook (ibuffer . (lambda ()
+                     (ibuffer-vc-set-filter-groups-by-vc-root)
+                     (unless (eq ibuffer-sorting-mode 'alphabetic)
+                       (ibuffer-do-sort-by-alphabetic)))))
 
 ;; page-break-lines : https://github.com/purcell/page-break-lines
 (use-package page-break-lines
@@ -211,160 +237,10 @@
   :straight (magit :type git :host github :repo "magit/magit")
   :bind ("C-x g" . magit-status))
 
-;; forge : https://github.com/magit/forge
-(use-package forge
-  :ensure t
-  :after magit
-  :straight (forge :type git :host github :repo "magit/forge")
-  :config
-  (setq auth-sources '("/Users/quint.pieters/.authinfo")))
-
-;; forge : https://github.com/iqbalansari/emacs-emojify
+;; emacs-emojify : https://github.com/iqbalansari/emacs-emojify
 (use-package emojify
   :ensure t
   :straight (emojify :type git :host github :repo "iqbalansari/emacs-emojify"))
-
-;; code-review : https://github.com/wandersoncferreira/code-review
-(use-package code-review
-  :ensure t
-  :after forge
-  :straight (code-review :type git
-			 :host github
-			 :repo "wandersoncferreira/code-review"
-			 :fork (:host github
-                                :repo "phelrine/code-review"
-				:branch "fix/closql-update"))
-  :init
-  (add-hook 'code-review-mode-hook #'emojify-mode))
-
-;; Flycheck : https://www.flycheck.org
-(use-package flycheck
-  :ensure t
-  :straight (flycheck :type git :host github :repo "flycheck/flycheck")
-  :config
-  ;; Inherit Emacs Lisp load path
-  (setq flycheck-emacs-lisp-load-path 'inherit)
-
-  ;; Disable Flycheck globally
-  (global-flycheck-mode -1)
-
-  ;; Define the configuration file variable for standardrb
-  (flycheck-def-config-file-var flycheck-standardrbrc ruby-standardrb ".standard.yml"
-    :safe #'stringp)
-
-  ;; Define the lint-only option variable for standardrb
-  (flycheck-def-option-var flycheck-standardrb-lint-only nil ruby-standardrb
-    "Whether to only report code issues in Standardrb.
-
-  When non-nil, only report code issues in Standardrb, via `--lint'.
-  Otherwise report style issues as well."
-    :safe #'booleanp
-    :type 'boolean)
-
-  ;; Define Flycheck checker for standardrb
-  (flycheck-define-checker ruby-standardrb
-    "A Ruby syntax and style checker using the standardrb gem."
-    :command ("standardrb"
-              "--display-cop-names"
-              "--force-exclusion"
-              "--format" "emacs"
-              "--cache" "false"
-              (config-file "--config" flycheck-standardrbrc)
-              (option-flag "--lint" flycheck-standardrb-lint-only)
-              "--stdin" source-original)
-    :standard-input t
-    :working-directory flycheck-ruby--find-project-root
-    :error-patterns
-    ((info line-start (file-name) ":" line ":" column ": C: "
-           (optional (id (one-or-more (not (any ":")))) ": ") (message) line-end)
-     (warning line-start (file-name) ":" line ":" column ": W: "
-              (optional (id (one-or-more (not (any ":")))) ": ") (message)
-              line-end)
-     (error line-start (file-name) ":" line ":" column ": " (or "E" "F") ": "
-            (optional (id (one-or-more (not (any ":")))) ": ") (message)
-            line-end))
-    :modes (ruby-mode)
-    :next-checkers ())
-
-  ;; Ensure the globally installed standardrb is used
-  (setq flycheck-ruby-standard-executable "standardrb")
-
-  ;; Enable Flycheck and select the standardrb checker in ruby-mode
-  :hook ((ruby-mode . flycheck-mode)
-         (ruby-mode . (lambda ()
-                        (flycheck-select-checker 'ruby-standardrb)))))
-
-;; format-all : https://github.com/lassik/emacs-format-all-the-code
-(use-package format-all
-  :ensure t
-  :straight (format-all :type git :host github :repo "lassik/emacs-format-all-the-code")
-  :config
-  (setq format-all-formatters
-	'(("Ruby" (standardrb))))
-
-  ;; Ensure formatter is properly set on every new Ruby buffer
-  (defun my/format-all-set-ruby-formatter ()
-    (setq-local format-all-formatters
-                '(("Ruby" (standardrb)))))
-
-  :hook ((ruby-mode . format-all-mode)
-	 (ruby-mode . my/format-all-set-ruby-formatter)
-         (format-all-mode . format-all-ensure-formatter)))  ; Ensure formatter is set
-
-;; CSV-mode : [built-in]
-(use-package csv-mode
-  :mode (("\\.csv\\'" . csv-mode)))
-
-;; YAML-mode : [built-in]
-(use-package yaml-mode
-  :mode (("\\.yml\\'" . yaml-mode)
-   ("\\.yaml\\'" . yaml-mode)))
-
-;; Dockerfile-mode : https://github.com/spotify/dockerfile-mode
-(use-package dockerfile-mode
-  :straight (dockerfile-mode :type git :host github :repo "spotify/dockerfile-mode")
-  :mode (("Dockerfile\\'" . dockerfile-mode)))
-
-;; Markdown major mode : https://github.com/jrblevin/markdown-mode
-(use-package markdown-mode
-  :ensure t
-  :straight (markdown-mode :type git :host github :repo "jrblevin/markdown-mode")
-  :commands (markdown-mode gfm-view-mode)
-  :mode (("README\\.md\\'" . gfm-view-mode)
-   ("\\.md\\'" . markdown-mode)
-   ("\\.markdown\\'" . markdown-mode))
-  :init (setq markdown-command "multimarkdown"))
-
-;; Groovy major mode : https://github.com/Groovy-Emacs-Modes/groovy-emacs-modes
-(use-package groovy-mode
-  :straight (groovy-mode :type git :host github :repo "Groovy-Emacs-Modes/groovy-emacs-modes")
-  :mode (("Jenkinsfile\\'" . groovy-mode)
-   ("\\.groovy\\'" . groovy-mode)))
-
-;; Python major mode : https://gitlab.com/python-mode-devs/python-mode
-;; (use-package python-mode
-;;   :straight (python-mode :type git :host gitlab :repo "python-mode-devs/python-mode")
-;;   :mode ("\\.py\\'" . python-mode)
-;;   :interpreter ("python" . python-mode))
-
-;; Hashicorp HCL mode : https://github.com/hcl-emacs/hcl-mode
-(use-package hcl-mode
-  :straight (hcl-mode :type git :host github :repo "hcl-emacs/hcl-mode")
-  :mode ("\\.hcl\\'" . hcl-mode))
-
-;; kotlin-mode : https://github.com/Emacs-Kotlin-Mode-Maintainers/kotlin-mode
-(use-package kotlin-mode
-  :straight (kotlin-mode :type git :host github :repo "Emacs-Kotlin-Mode-Maintainers/kotlin-mode")
-  :mode ("\\.kt\\'" . kotlin-mode)
-  :hook (
-      (kotlin-mode . lsp-deferred)
-      (kotlin-mode . company-mode)))
-
-;; go-mode.el : https://github.com/dominikh/go-mode.el
-(use-package go-mode
-  :straight (go-mode :type git :host github :repo "dominikh/go-mode.el")
-  :mode ("\\.go\\'" . go-mode)
-  :hook ((go-mode . lsp-deferred)))
 
 ;; which-key : https://github.com/justbur/emacs-which-key
 (use-package which-key
@@ -372,52 +248,6 @@
   :straight (which-key :type git :host github :repo "justbur/emacs-which-key")
   :config
   (which-key-mode))
-
-;; lsp-mode : https://emacs-lsp.github.io/lsp-mode
-(use-package lsp-mode
-  :commands (lsp lsp-deferred)
-  :after asdf
-  :diminish (lsp-mode . "LSP")
-  :straight (lsp-mode :type git :host github :repo "emacs-lsp/lsp-mode")
-  :bind (:map lsp-mode-map)
-  :config
-  ;; register rust lsp + tramp
-  (with-eval-after-load "lsp-rust"
-    (lsp-register-client
-     (make-lsp-client
-      :new-connection (lsp-stdio-connection
-                       (lambda ()
-			 `(,(or (executable-find
-				 (cl-first lsp-rust-analyzer-server-command))
-				(lsp-package-path 'rust-analyzer)
-				"rust-analyzer")
-                           ,@(cl-rest lsp-rust-analyzer-server-args))))
-      :remote? t
-      :major-modes '(rust-mode rustic-mode)
-      :initialization-options 'lsp-rust-analyzer--make-init-options
-      :notification-handlers (ht<-alist lsp-rust-notification-handlers)
-      :action-handlers (ht ("rust-analyzer.runSingle" #'lsp-rust--analyzer-run-single))
-      :library-folders-fn (lambda (_workspace) lsp-rust-library-directories)
-      :after-open-fn (lambda ()
-                       (when lsp-rust-analyzer-server-display-inlay-hints
-			 (lsp-rust-analyzer-inlay-hints-mode)))
-      :ignore-messages nil
-      :server-id 'rust-analyzer-remote)))
-
-  (setq lsp-clients-kotlin-server-executable "kotlin-language-server")
-
-  :custom
-  (lsp-inlay-hint-enable t)
-
-  :hook ((lsp-mode . lsp-enable-which-key-integration))
-  :init)
-
-;; lsp-ui : https://emacs-lsp.github.io/lsp-ui
-(use-package lsp-ui
-  :commands lsp-ui
-  :straight (lsp-ui :type git :host github :repo "emacs-lsp/lsp-ui")
-  :hook (lsp-mode . lsp-ui-mode)
-  :after lsp-mode)
 
 ;; company-mode : https://github.com/company-mode/company-mode
 (use-package company
@@ -430,83 +260,207 @@
   :init
   (global-company-mode 1))
 
-(use-package ruby-mode
-  :after (company)
-  :straight (:type built-in)
-  :config
-  (defun mise-enable ()
-    "Setup mise for environment by adding its shims directory to exec-path and PATH."
-    (interactive)
-    (let ((mise-path "/Users/quint.pieters/.local/share/mise/shims"))
-      ;; Add to exec-path if not already included
-      (unless (member mise-path exec-path)
-	(setq exec-path (cons mise-path exec-path)))
-
-      ;; Add to PATH environment variable if not already included
-      (unless (string-match-p (regexp-quote mise-path) (getenv "PATH"))
-	(setenv "PATH" (concat mise-path ":" (getenv "PATH"))))))
-
-  (defun my-ruby-mode-setup ()
-    (setq-local company-backends '((company-capf company-robe company-dabbrev-code))))
-
-  (defun insert-ruby-debug-statement ()
-    "Inserts 'require 'pry'; binding.pry' at the current cursor position."
-    (interactive)
-    (insert "require 'pry'; binding.pry"))
-
-  (define-key ruby-mode-map (kbd "<f19> b") 'insert-ruby-debug-statement)
-
-  (define-key ruby-mode-map (kbd "M-<right>") 'ruby-forward-sexp)
-  (define-key ruby-mode-map (kbd "M-<left>") 'ruby-backward-sexp)
-  (define-key ruby-mode-map (kbd "M-<up>") 'ruby-beginning-of-block)
-  (define-key ruby-mode-map (kbd "M-<down>") 'ruby-end-of-block)
-
-  :hook ((ruby-mode . my-ruby-mode-setup)
-	 (ruby-mode . mise-enable)))
+;; company-box : https://github.com/sebastiencs/company-box
+(use-package company-box
+  :straight (company-box :type git :host github :repo "sebastiencs/company-box")
+  :hook (company-mode . company-box-mode))
 
 ;; robe : https://github.com/dgutov/robe
 (use-package robe
   :ensure t
   :straight (robe :type git :host github :repo "dgutov/robe")
+  :after company
+  :hook ((ruby-ts-mode . robe-mode)
+         (ruby-mode . robe-mode)
+         (ruby-ts-mode . my/setup-robe-company)
+         (ruby-mode . my/setup-robe-company)
+         (ruby-ts-mode . my/robe-start-maybe))
   :config
-  (defun my/start-robe ()
+  ;; Set up company-robe backend for Ruby modes specifically
+  (defun my/setup-robe-company ()
+    "Set up company-robe backend for the current buffer."
+    (when (and (bound-and-true-p company-mode)
+               (derived-mode-p 'ruby-ts-mode 'ruby-mode))
+      (set (make-local-variable 'company-backends)
+           (append '(company-robe) company-backends))))
+
+  ;; Path to our robe-specific Gemfile
+  (defvar my/robe-gemfile (expand-file-name "Gemfile.robe" user-emacs-directory)
+    "Path to the robe-specific Gemfile for bundler-compose.")
+
+  (defun my/bundler-compose-available-p ()
+    "Check if bundler-compose is available."
+    (zerop (shell-command "gem exec bundler-compose help >/dev/null 2>&1")))
+
+  (defun my/robe-start-with-compose ()
+    "Start robe using bundler-compose if available, otherwise fallback to regular robe-start."
     (interactive)
-    (robe-start)
-    (company-mode 1))
-  :bind (("<f2> <f2>" . my/start-robe)
-	 ("<f19> n" . robe-jump)
-	 ("<f19> m" . robe-jump-to-module))
-  :hook ((ruby-mode . robe-mode)))
+    (if (and (file-exists-p my/robe-gemfile)
+             (my/bundler-compose-available-p))
+        (progn
+          (message "Starting robe with bundler-compose...")
+          ;; Ensure inf-ruby is loaded first
+          (require 'inf-ruby nil t)
+          ;; Create a custom implementation for bundler-compose
+          (let ((original-implementations inf-ruby-implementations))
+            (setq inf-ruby-implementations
+                  (cons `("bundler-compose" .
+                          ("bundle" "compose" "Gemfile" ,my/robe-gemfile "--exec" "ruby"))
+                        inf-ruby-implementations))
+            ;; Start robe with bundler-compose
+            (let ((inf-ruby-default-implementation "bundler-compose"))
+              (robe-start))
+            ;; Restore original implementations
+            (setq inf-ruby-implementations original-implementations)))
+      (progn
+        (message "bundler-compose not available, using regular robe-start")
+        (robe-start))))
 
-;; int-ruby : https://github.com/nonsequitur/inf-ruby
-(use-package inf-ruby
+  (defun my/robe-start-maybe ()
+    "Start robe if not already running in Ruby buffers."
+    (when (and (not (robe-running-p))
+               (derived-mode-p 'ruby-ts-mode 'ruby-mode))
+      (my/robe-start-with-compose)))
+
+  :bind (:map robe-mode-map
+              ("C-c r j" . robe-jump)
+              ("C-c r d" . robe-doc)
+              ("C-c r s" . my/robe-start-with-compose)
+              ("C-c r r" . robe-rails-refresh)))
+
+;; flycheck : https://github.com/flycheck/flycheck
+(use-package flycheck
   :ensure t
-  :after ruby-mode
-  :straight (inf-ruby :type git :host github :repo "nonsequitur/inf-ruby")
-  :init
-  (add-hook 'ruby-mode-hook 'inf-ruby-minor-mode))
-
-(use-package tree-sitter
-  :ensure t
+  :straight (flycheck :type git :host github :repo "flycheck/flycheck")
+  :hook ((prog-mode . flycheck-mode)
+         (ruby-ts-mode . my/setup-ruby-flycheck)
+         (ruby-mode . my/setup-ruby-flycheck))
   :config
-  (global-tree-sitter-mode))
+  ;; Set up Ruby checkers to use project-specific tools
+  (defun my/setup-ruby-flycheck ()
+    "Configure Ruby checkers for current project."
+    (when (derived-mode-p 'ruby-ts-mode 'ruby-mode)
+      (let ((project-root (or (vc-root-dir) default-directory))
+            (has-gemfile (file-exists-p "Gemfile")))
 
-(use-package tree-sitter-langs
-  :ensure t
-  :after tree-sitter
-  :config
-  (tree-sitter-require 'ruby)
-  (add-to-list 'tree-sitter-major-mode-language-alist '(ruby-mode . ruby))
-  :hook ((ruby-mode . tree-sitter-hl-mode)))
+        ;; Use bundler if Gemfile exists
+        (if has-gemfile
+            (progn
+              (setq-local flycheck-ruby-standard-executable "bundle")
+              (setq-local flycheck-ruby-standard-executable-args '("exec" "standardrb"))
+              (setq-local flycheck-ruby-rubocop-executable "bundle")
+              (setq-local flycheck-ruby-rubocop-executable-args '("exec" "rubocop")))
+          (progn
+            (setq-local flycheck-ruby-standard-executable "standardrb")
+            (setq-local flycheck-ruby-rubocop-executable "rubocop")))
 
-;; smartparens : https://github.com/Fuco1/smartparens
-(use-package smartparens-mode
-  :ensure smartparens  ;; install the package
-  :straight (smartparens :type git :host github :repo "Fuco1/smartparens")
-  :hook (prog-mode text-mode markdown-mode) ;; add `smartparens-mode` to these hooks
+        ;; Prefer StandardRB over Rubocop
+        (if (or (and has-gemfile (zerop (shell-command "bundle list standard >/dev/null 2>&1")))
+                (executable-find "standardrb"))
+            (setq-local flycheck-checkers '(ruby-standard))
+          (setq-local flycheck-checkers '(ruby-rubocop))))))
+
+  :bind (("C-c ! l" . flycheck-list-errors)
+         ("C-c ! n" . flycheck-next-error)
+         ("C-c ! p" . flycheck-previous-error)
+         ("C-c ! c" . flycheck-buffer)
+         ("C-c ! v" . flycheck-verify-setup)))
+
+;; Tree-sitter configuration
+(use-package treesit
+  :ensure nil
+  :straight nil
   :config
-  ;; load default config
-  (require 'smartparens-config))
+  ;; Tree-sitter grammar sources
+  (setq treesit-language-source-alist
+        '((bash . ("https://github.com/tree-sitter/tree-sitter-bash"))
+          (c . ("https://github.com/tree-sitter/tree-sitter-c"))
+          (cpp . ("https://github.com/tree-sitter/tree-sitter-cpp"))
+          (css . ("https://github.com/tree-sitter/tree-sitter-css"))
+          (dockerfile . ("https://github.com/camdencheek/tree-sitter-dockerfile"))
+          (go . ("https://github.com/tree-sitter/tree-sitter-go"))
+          (html . ("https://github.com/tree-sitter/tree-sitter-html"))
+          (java . ("https://github.com/tree-sitter/tree-sitter-java"))
+          (javascript . ("https://github.com/tree-sitter/tree-sitter-javascript"))
+          (json . ("https://github.com/tree-sitter/tree-sitter-json"))
+          (kotlin . ("https://github.com/fwcd/tree-sitter-kotlin"))
+          (markdown . ("https://github.com/tree-sitter-grammars/tree-sitter-markdown" nil "tree-sitter-markdown/src"))
+          (markdown-inline . ("https://github.com/tree-sitter-grammars/tree-sitter-markdown" nil "tree-sitter-markdown-inline/src"))
+          (python . ("https://github.com/tree-sitter/tree-sitter-python"))
+          (ruby . ("https://github.com/tree-sitter/tree-sitter-ruby"))
+          (rust . ("https://github.com/tree-sitter/tree-sitter-rust"))
+          (terraform . ("https://github.com/MichaHoffmann/tree-sitter-hcl"))
+          (toml . ("https://github.com/tree-sitter/tree-sitter-toml"))
+          (tsx . ("https://github.com/tree-sitter/tree-sitter-typescript" nil "tsx/src"))
+          (typescript . ("https://github.com/tree-sitter/tree-sitter-typescript" nil "typescript/src"))
+          (yaml . ("https://github.com/ikatyang/tree-sitter-yaml"))))
+
+  (defun my/treesit-install-all-languages ()
+    "Install all tree-sitter languages."
+    (interactive)
+    (mapc #'treesit-install-language-grammar (mapcar #'car treesit-language-source-alist)))
+
+  (unless (file-exists-p (expand-file-name "tree-sitter" user-emacs-directory))
+    (my/treesit-install-all-languages))
+
+  (setq major-mode-remap-alist
+        '((bash-mode . bash-ts-mode)
+          (sh-mode . bash-ts-mode)  ; Map shell mode to bash
+          (shell-mode . bash-ts-mode)  ; Map shell mode to bash
+          (c-mode . c-ts-mode)
+          (c++-mode . c++-ts-mode)
+          (css-mode . css-ts-mode)
+          (dockerfile-mode . dockerfile-ts-mode)
+          (go-mode . go-ts-mode)
+          (html-mode . html-ts-mode)
+          (java-mode . java-ts-mode)
+          (javascript-mode . js-ts-mode)
+          (js-mode . js-ts-mode)
+          (json-mode . json-ts-mode)
+          (kotlin-mode . kotlin-ts-mode)
+          (markdown-mode . markdown-ts-mode)
+          (python-mode . python-ts-mode)
+          (ruby-mode . ruby-ts-mode)
+          (rust-mode . rust-ts-mode)
+          (terraform-mode . terraform-ts-mode)
+          (hcl-mode . terraform-ts-mode)
+          (toml-mode . toml-ts-mode)
+          (typescript-mode . typescript-ts-mode)
+          (yaml-mode . yaml-ts-mode)))
+
+  (add-to-list 'auto-mode-alist '("\\.sh\\'" . bash-ts-mode))
+  (add-to-list 'auto-mode-alist '("\\.bash\\'" . bash-ts-mode))
+  (add-to-list 'auto-mode-alist '("\\.zsh\\'" . bash-ts-mode))
+  (add-to-list 'auto-mode-alist '("\\.fish\\'" . bash-ts-mode))
+
+  (add-to-list 'auto-mode-alist '("\\.rb\\'" . ruby-ts-mode))
+  (add-to-list 'auto-mode-alist '("\\.ruby\\'" . ruby-ts-mode))
+  (add-to-list 'auto-mode-alist '("Rakefile\\'" . ruby-ts-mode))
+  (add-to-list 'auto-mode-alist '("Gemfile\\'" . ruby-ts-mode))
+  (add-to-list 'auto-mode-alist '("\\.gemspec\\'" . ruby-ts-mode))
+  (add-to-list 'auto-mode-alist '("\\.md\\'" . markdown-ts-mode))
+  (add-to-list 'auto-mode-alist '("\\.markdown\\'" . markdown-ts-mode))
+  (add-to-list 'auto-mode-alist '("README\\.md\\'" . markdown-ts-mode))
+  (add-to-list 'auto-mode-alist '("\\.html\\'" . html-ts-mode))
+  (add-to-list 'auto-mode-alist '("\\.htm\\'" . html-ts-mode))
+  (add-to-list 'auto-mode-alist '("\\.erb\\'" . ruby-ts-mode)) ; ERB is Ruby with HTML
+  (add-to-list 'auto-mode-alist '("\\.hcl\\'" . terraform-ts-mode))
+  (add-to-list 'auto-mode-alist '("\\.tf\\'" . terraform-ts-mode))
+  (add-to-list 'auto-mode-alist '("\\.tfvars\\'" . terraform-ts-mode))
+  (add-to-list 'auto-mode-alist '("\\.py\\'" . python-ts-mode))
+  (add-to-list 'auto-mode-alist '("\\.pyi\\'" . python-ts-mode))
+  (add-to-list 'auto-mode-alist '("\\.json\\'" . json-ts-mode))
+  (add-to-list 'auto-mode-alist '("\\.yml\\'" . yaml-ts-mode))
+  (add-to-list 'auto-mode-alist '("\\.yaml\\'" . yaml-ts-mode))
+  (add-to-list 'auto-mode-alist '("\\.java\\'" . java-ts-mode))
+  (add-to-list 'auto-mode-alist '("\\.kt\\'" . kotlin-ts-mode))
+  (add-to-list 'auto-mode-alist '("\\.kts\\'" . kotlin-ts-mode))
+  (add-to-list 'auto-mode-alist '("Dockerfile\\'" . dockerfile-ts-mode))
+  (add-to-list 'auto-mode-alist '("\\.dockerfile\\'" . dockerfile-ts-mode))
+  (add-to-list 'auto-mode-alist '("\\.csv\\'" . csv-mode)) ; Use built-in CSV mode
+
+  ;; Tree-sitter will be enabled automatically for supported modes
+  )
 
 ;; docker.el : https://github.com/Silex/docker.el
 (use-package docker
@@ -522,28 +476,6 @@
 	 ("<C-S-tab>" . 'iflipb-previous-buffer)
 	 ("M-o" . 'other-window)))
 
-;; openai : https://github.com/emacs-openai/openai
-(use-package openai
-  :straight (openai :type git :host github :repo "emacs-openai/openai")
-  :config
-  (setq org-id "")
-  (setq openai-key ""))
-
-;; chatgpt : https://github.com/emacs-openai/chatgpt
-(use-package chatgpt
-  :straight (chatgpt :type git :host github :repo "emacs-openai/chatgpt")
-  :config
-  (setq chatgpt-model "gpt-4o"))
-
-;; copilot : https://github.com/copilot-emacs/copilot.el
-(use-package copilot
-  :ensure t
-  :straight (:host github :repo "copilot-emacs/copilot.el" :files ("dist" "*.el"))
-  :bind (("<f1> <f1>" . copilot-mode)
-	 ("<f19> z" . copilot-previous-completion)
-	 ("<f19> x" . copilot-next-completion)
-	 ("<f19> a" . copilot-accept-completion)))
-
 ;; editorconfig : https://github.com/editorconfig/editorconfig-emacs
 (use-package editorconfig
   :ensure t
@@ -551,176 +483,67 @@
   :config
   (editorconfig-mode 1))
 
-;; rustic : https://github.com/brotzeit/rustic
-(use-package rustic
-  :after (lsp-mode company)
-  :straight (rustic :type git :host github :repo "brotzeit/rustic")
+;; vterm : https://github.com/akermu/emacs-libvterm
+(use-package vterm
+  :ensure t
+  :straight (vterm :type git :host github :repo "akermu/emacs-libvterm")
+  :hook ((vterm-mode . (lambda () (display-line-numbers-mode 0)))
+         (vterm-mode . (lambda ()
+                         ;; Use JetBrains Mono Nerd Font for icons support
+                         (condition-case nil
+                             (progn
+                               (setq-local buffer-face-mode-face '(:family "JetBrainsMono Nerd Font" :height 120))
+                               (buffer-face-mode t))
+                           (error
+                            ;; Fallback to Menlo if Nerd Font not available
+                            (setq-local buffer-face-mode-face '(:family "Menlo" :height 120))
+                            (buffer-face-mode t))))))
   :config
-  (setq exec-path (append exec-path (list (expand-file-name "~/.cargo/bin"))))
-  (setq rustic-format-trigger 'on-save)
-  (setq rustic-lsp-client 'lsp-mode)
-  (defun my-rustic-mode-setup ()
-    (setq-local company-backends '((company-capf company-dabbrev-code)))))
+  ;; Set shell to zsh (since you're on macOS)
+  (setq vterm-shell "/bin/zsh")
+  ;; Increase scrollback buffer
+  (setq vterm-max-scrollback 10000)
+  ;; Kill buffer when terminal process exits
+  (setq vterm-kill-buffer-on-exit t)
+  ;; Always use current directory for new vterm buffers
+  (setq vterm-always-compile-module t)
+  :bind (("C-c t" . vterm)))
 
-;; ================================================================================
-;; BEGIN ESHELL
-;; ================================================================================
-
-;; capf-autosuggest - https://github.com/emacsmirror/capf-autosuggest
-(use-package capf-autosuggest
-  :straight (capf-autosuggest :type git :host github :repo "emacsmirror/capf-autosuggest")
-  :hook
-  (eshell-mode . capf-autosuggest-mode))
-
-;; eshell - build-in
-(use-package eshell
-  :ensure nil  ; Eshell is built-in, so no need to install
-  :init
-  ;; Set Eshell directory and history paths
-  (setq eshell-directory-name (concat my-emacs-dir "eshell/")
-        eshell-history-file-name (concat my-emacs-dir "eshell/history")
-        eshell-aliases-file (concat my-emacs-dir "eshell/alias")
-        eshell-last-dir-ring-file-name (concat my-emacs-dir "eshell/lastdir")
-        eshell-banner-message "")
-
-  ;; Eshell settings
-  (setq eshell-highlight-prompt nil
-        eshell-buffer-shorthand t
-        eshell-cmpl-ignore-case t
-        eshell-cmpl-cycle-completions t
-        eshell-destroy-buffer-when-process-dies t
-        eshell-history-size 10000
-        eshell-save-history-on-exit t
-        eshell-hist-ignoredups t
-        eshell-buffer-maximum-lines 20000
-        eshell-error-if-no-glob t
-        eshell-glob-case-insensitive t
-        eshell-scroll-to-bottom-on-input 'all
-        eshell-scroll-to-bottom-on-output 'all
-        eshell-list-files-after-cd t)
-
-  ;; Visual commands
-  (setq eshell-visual-commands '("ranger" "vi" "screen" "top" "less" "more" "lynx"
-                                 "ncftp" "pine" "tin" "trn" "elm" "vim"
-                                 "nmtui" "alsamixer" "htop" "el" "elinks")
-        eshell-visual-subcommands '(("git" "log" "diff" "show")))
-
-  ;; Set the font for icons
-  (set-fontset-font t 'unicode (font-spec :family "Symbols Nerd Font Mono") nil 'prepend)
-
-  ;; Define macros for prompt customization
-  (defmacro with-face (str &rest props)
-    "Return STR propertized with PROPS."
-    `(propertize ,str 'face (list ,@props)))
-
-  (defmacro esh-section (name icon form &rest props)
-    "Build eshell section NAME with ICON prepended to evaled FORM with PROPS."
-    `(setq ,name
-           (lambda () (when ,form
-                        (-> ,icon
-                            (concat esh-section-delim ,form)
-                            (with-face ,@props))))))
-
-  ;; Define the accumulator function before it's used
-  (defun esh-acc (acc x)
-    "Accumulator for evaluating and concatenating esh-sections."
-    (--if-let (funcall x)
-        (if (s-blank? acc)
-            it
-          (concat acc esh-sep it))
-      acc))
-
-  ;; Custom function to get the current Git branch name
-  (defun get-git-branch-name ()
-    "Retrieve the current Git branch name."
-    (let ((branch (vc-git--symbolic-ref (eshell/pwd))))
-      (when branch
-        (string-trim branch))))
-
-  ;; Define sections with nerd-icons
-  (esh-section esh-dir
-               (nerd-icons-icon-for-dir (eshell/pwd))
-               (abbreviate-file-name (eshell/pwd))
-               '(:foreground "gold"))
-
-  (esh-section esh-git
-               (nerd-icons-devicon "nf-dev-git")
-               (get-git-branch-name)
-               '(:foreground "pink"))
-
-  (esh-section esh-clock
-               (nerd-icons-mdicon "nf-md-clock")
-               (format-time-string "%H:%M" (current-time))
-               '(:foreground "forest green"))
-
-  (esh-section esh-num
-               (nerd-icons-mdicon "nf-md-format_list_numbered")
-               (number-to-string esh-prompt-num)
-               '(:foreground "brown"))
-
-  ;; Separator between esh-sections
-  (setq esh-sep "  ")  ; or " | "
-  (setq esh-section-delim " ")
-
-  ;; Eshell prompt header
-  (setq esh-header "\n")  ; Adds a newline before the prompt
-
-  ;; Eshell prompt regexp and string
-  (setq eshell-prompt-regexp "^└─> ")  ; Matches the prompt string
-  (setq eshell-prompt-string "└─> ")   ; Sets the prompt arrow
-
-  ;; Choose which eshell-funcs to enable
-  (setq eshell-funcs (list esh-dir esh-git esh-clock esh-num))
-
-  ;; Define the eshell prompt function
-  (defun esh-prompt-func ()
-    "Build `eshell-prompt-function'."
-    (concat esh-header
-            (-reduce-from 'esh-acc "" eshell-funcs)
-            "\n"
-            eshell-prompt-string))
-
-  ;; Enable the new eshell prompt
-  (setq eshell-prompt-function 'esh-prompt-func)
-
+;; multi-vterm : https://github.com/suonlight/multi-vterm
+(use-package multi-vterm
+  :ensure t
+  :straight (multi-vterm :type git :host github :repo "suonlight/multi-vterm")
   :config
-  ;; Function to clear Eshell buffer
-  (defun eshell-clear-buffer ()
-    "Clear terminal."
-    (interactive)
-    (let ((inhibit-read-only t))
-      (erase-buffer)
-      (eshell-send-input)))
-
-  ;; Add hook to set key binding for clearing Eshell
-  (add-hook 'eshell-mode-hook
-            (lambda ()
-              (local-set-key (kbd "C-l") 'eshell-clear-buffer)))
-
-  ;; Function to open magit-status for the current directory
-  (defun eshell/magit ()
-    "Function to open magit-status for the current directory."
-    (interactive)
-    (require 'magit)
-    (magit-status-setup-buffer default-directory)
-    nil)
-
-  ;; Implement a "prompt number" section
-  (setq esh-prompt-num 0)
-
-  (add-hook 'eshell-exit-hook (lambda () (setq esh-prompt-num 0)))
-
-  (advice-add 'eshell-send-input :before
-              (lambda (&rest args) (setq esh-prompt-num (cl-incf esh-prompt-num)))))
-
-;; ================================================================================
-;; END ESHELL
-;; ================================================================================
+  ;; Set dedicated window for multi-vterm
+  (setq multi-vterm-dedicated-window-height 30)
+  :bind (("C-c C-t" . multi-vterm)
+         ("C-c m t" . multi-vterm-dedicated-toggle)
+         ("C-c m n" . multi-vterm-next)
+         ("C-c m p" . multi-vterm-prev)))
 
 ;; My own custom configuration
 (use-package emacs
+  :hook ((org-mode . (lambda () (display-line-numbers-mode 0)))
+         (term-mode . (lambda () (display-line-numbers-mode 0)))
+         (shell-mode . (lambda () (display-line-numbers-mode 0)))
+         (ibuffer-mode . (lambda () (display-line-numbers-mode 0)))
+         (treemacs-mode . (lambda () (display-line-numbers-mode 0)))
+         (vterm-mode . (lambda () (display-line-numbers-mode 0)))
+         (before-save . delete-trailing-whitespace)
+         (after-init . (lambda ()
+                         ;; restore after startup
+                         (setq gc-cons-threshold 800000))))
   :config
   (setq inhibit-startup-message t)
+
+  ;; Set font to Menlo (clean macOS programming font)
+  (set-face-attribute 'default nil
+                      :family "Menlo"
+                      :height 120
+                      :weight 'normal)
+  (set-face-attribute 'fixed-pitch nil
+                      :family "Menlo"
+                      :height 120)
 
   (scroll-bar-mode -1)        ; Disable visible scrollbar
   (tool-bar-mode -1)          ; Disable the toolbar
@@ -732,29 +555,10 @@
   (column-number-mode)
   (global-display-line-numbers-mode t)
 
-  ;; Disable line numbers for some modes
-  (dolist (mode '(org-mode-hook
-                term-mode-hook
-                shell-mode-hook
-		ibuffer-mode
-                treemacs-mode-hook
-                inf-ruby-mode-hook
-                vterm-mode-hook
-                eshell-mode-hook))
-  (add-hook mode (lambda () (display-line-numbers-mode 0))))
-
   ;; Always prefer UTF-8
   (prefer-coding-system 'utf-8-unix)
   (setq x-select-request-type
 	'(UTF8_STRING COMPOUND_TEXT TEXT STRING))
-
-  ;; Always delete trailing whitespaces before save
-  (add-hook 'before-save-hook 'delete-trailing-whitespace)
-
-  ;; Restore early-init gb collect settings
-  (add-hook 'after-init-hook #'(lambda ()
-                               ;; restore after startup
-                               (setq gc-cons-threshold 800000)))
 
   ;; Set up the visible bell
   (setq visible-bell t)
@@ -765,7 +569,6 @@
   ;; Start in full screen
   ; (add-to-list 'default-frame-alist '(fullscreen . fullscreen))
 
-  (keymap-global-set "s-/" 'format-all-region-or-buffer)
   (keymap-global-set "M-/" 'comment-or-uncomment-region)
   (keymap-global-set "<f19> <left>" 'previous-buffer)
   (keymap-global-set "<f19> <right>" 'next-buffer)

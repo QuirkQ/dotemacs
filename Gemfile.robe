@@ -1,0 +1,16 @@
+# Robe dependencies for Emacs
+# This file is used with bundler-compose to provide robe with necessary gems
+# regardless of what's in the project's main Gemfile
+
+source 'https://rubygems.org'
+
+# Core dependencies for robe
+gem 'pry', '>= 0.10.0'
+gem 'pry-doc', '>= 0.6.0'
+
+# For Ruby 3.3+ compatibility
+gem 'readline-ext' if RUBY_VERSION >= '3.3'
+
+# Optional but useful debugging tools
+gem 'pry-byebug', platforms: [:mri]
+gem 'pry-stack_explorer'
