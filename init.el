@@ -366,6 +366,40 @@
          ("C-c ! c" . flycheck-buffer)
          ("C-c ! v" . flycheck-verify-setup)))
 
+;; Ruby formatting with standardrb
+(use-package ruby-mode
+  :ensure nil
+  :straight nil
+  :hook ((ruby-ts-mode . my/setup-ruby-standardrb-formatting)
+         (ruby-mode . my/setup-ruby-standardrb-formatting))
+  :config
+  ;; Set up standardrb formatting for Ruby files
+  (defun my/setup-ruby-standardrb-formatting ()
+    "Set up standardrb formatting for Ruby files."
+    (when (derived-mode-p 'ruby-ts-mode 'ruby-mode)
+      ;; Format with standardrb on save
+      (add-hook 'before-save-hook #'my/ruby-format-with-standardrb nil t)))
+
+  (defun my/ruby-format-with-standardrb ()
+    "Format current Ruby buffer with standardrb."
+    (when (and (derived-mode-p 'ruby-ts-mode 'ruby-mode)
+               (buffer-file-name)
+               (or (executable-find "standardrb")
+                   (and (file-exists-p "Gemfile")
+                        (zerop (shell-command "bundle list standard >/dev/null 2>&1")))))
+      (let ((command (if (and (file-exists-p "Gemfile")
+                              (zerop (shell-command "bundle list standard >/dev/null 2>&1")))
+                         "bundle exec standardrb --fix"
+                       "standardrb --fix")))
+        (shell-command (format "%s %s" command (shell-quote-argument (buffer-file-name))))
+        ;; Revert buffer to show formatted changes
+        (revert-buffer :ignore-auto :noconfirm))))
+
+  (defun my/ruby-format-buffer ()
+    "Manually format current Ruby buffer with standardrb."
+    (interactive)
+    (my/ruby-format-with-standardrb)))
+
 ;; Tree-sitter configuration
 (use-package treesit
   :ensure nil
