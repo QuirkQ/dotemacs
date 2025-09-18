@@ -10,6 +10,15 @@ recentf
 ac-comphist.dat
 .\#*
 /transient/
+recentf.eld
+
+# treesit
+/.treesit/
+/tree-sitter/
+
+# eln-cache
+/.eln-cache/
+/eln-cache/
 
 # treemacs
 /.cache/

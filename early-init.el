@@ -1,4 +1,4 @@
-;;; early-init.el
+;;; early-init.el --- Quint's Early Emacs Configuration -*- lexical-binding: t -*-
 
 ;;; Commentary:
 
