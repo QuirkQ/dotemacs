@@ -12,6 +12,9 @@ ac-comphist.dat
 /transient/
 recentf.eld
 
+# Environment variables
+.env
+
 # treesit
 /.treesit/
 /tree-sitter/

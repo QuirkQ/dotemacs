@@ -555,6 +555,60 @@
          ("C-c m n" . multi-vterm-next)
          ("C-c m p" . multi-vterm-prev)))
 
+;; gptel : https://github.com/karthink/gptel
+(use-package gptel
+  :ensure t
+  :straight (gptel :type git :host github :repo "karthink/gptel")
+  :config
+  ;; OpenRouter offers an OpenAI compatible API
+  (setq gptel-model 'openai/gpt-5
+        gptel-backend
+        (gptel-make-openai "OpenRouter"               ;Any name you want
+          :host "openrouter.ai"
+          :endpoint "/api/v1/chat/completions"
+          :stream t
+          :key (or (getenv "OPENROUTER_API_KEY") 'gptel-api-key)
+          :models '(x-ai/grok-code-fast-1
+                    anthropic/claude-sonnet-4
+                    google/gemini-2.5-flash
+                    google/gemini-2.5-pro
+                    openai/gpt-5
+                    deepseek/deepseek-chat-v3.1:free)))
+
+  ;; Set up presets for different use cases
+  (gptel-make-preset 'coding
+    :description "Optimized for coding tasks"
+    :backend gptel-backend
+    :model 'anthropic/claude-sonnet-4
+    :system "You are an expert programmer. Provide clean, well-documented code with explanations."
+    :temperature 0.3)
+
+  (gptel-make-preset 'writing
+    :description "For writing and editing tasks"
+    :backend gptel-backend
+    :model 'openai/gpt-5
+    :system "You are a skilled writer and editor. Help improve clarity, style, and flow."
+    :temperature 0.7)
+
+  (gptel-make-preset 'explain
+    :description "Simple explanations"
+    :backend gptel-backend
+    :model 'google/gemini-2.5-flash
+    :system "Explain this clearly and concisely to someone learning the topic.")
+
+  ;; General settings
+  (setq gptel-default-mode 'org-mode
+        gptel-use-curl t
+        gptel-stream t)
+
+  :bind (("C-c g g" . gptel)                     ; Open gptel chat
+         ("C-c g s" . gptel-send)                ; Send current region/buffer
+         ("C-c g m" . gptel-menu)                ; Open gptel transient menu
+         ("C-c g r" . gptel-rewrite-and-replace) ; Rewrite and replace region
+         ("C-c g k" . gptel-abort)               ; Abort current request
+         ("C-c g n" . gptel-context-add-buffer)  ; Add buffer to context
+         ("C-c g f" . gptel-context-add-file)))  ; Add file to context
+
 ;; My own custom configuration
 (use-package emacs
   :hook ((org-mode . (lambda () (display-line-numbers-mode 0)))
