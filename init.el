@@ -251,6 +251,7 @@
 
 ;; company-mode : https://github.com/company-mode/company-mode
 (use-package company
+  :demand t
   :ensure t
   :straight (company :type git :host github :repo "company-mode/company-mode")
   :hook ((prog-mode . company-mode))
@@ -274,7 +275,8 @@
          (ruby-mode . robe-mode)
          (ruby-ts-mode . my/setup-robe-company)
          (ruby-mode . my/setup-robe-company)
-         (ruby-ts-mode . my/robe-start-maybe))
+         (ruby-ts-mode . my/robe-start-maybe)
+         (ruby-mode . my/robe-start-maybe))
   :config
   ;; Set up company-robe backend for Ruby modes specifically
   (defun my/setup-robe-company ()
@@ -284,43 +286,60 @@
       (set (make-local-variable 'company-backends)
            (append '(company-robe) company-backends))))
 
+  (require 'inf-ruby)
+
   ;; Path to our robe-specific Gemfile
   (defvar my/robe-gemfile (expand-file-name "Gemfile.robe" user-emacs-directory)
     "Path to the robe-specific Gemfile for bundler-compose.")
 
+  (defun my/project-root ()
+    "Return project root for current buffer."
+    (or (vc-root-dir)
+        (when (fboundp 'project-current)
+          (when-let ((p (project-current nil)))
+            (car (project-roots p))))
+        default-directory))
+
   (defun my/bundler-compose-available-p ()
-    "Check if bundler-compose is available."
-    (zerop (shell-command "gem exec bundler-compose help >/dev/null 2>&1")))
+    "Check if bundler-compose (bundle compose) is available in this project."
+    (let ((default-directory (my/project-root)))
+      (and (executable-find "bundle")
+           (zerop (call-process "bundle" nil nil nil "help" "compose")))))
+
+  (defun my/bundler-usable-p ()
+    "Check if Bundler is usable in this project."
+    (let ((default-directory (my/project-root)))
+      (and (executable-find "bundle")
+           (file-exists-p "Gemfile")
+           (zerop (call-process "bundle" nil nil nil "check")))))
 
   (defun my/robe-start-with-compose ()
-    "Start robe using bundler-compose if available, otherwise fallback to regular robe-start."
+    "Start robe using bundler-compose if available; otherwise, start with a sane default."
     (interactive)
-    (if (and (file-exists-p my/robe-gemfile)
-             (my/bundler-compose-available-p))
-        (progn
-          (message "Starting robe with bundler-compose...")
-          ;; Ensure inf-ruby is loaded first
-          (require 'inf-ruby nil t)
-          ;; Create a custom implementation for bundler-compose
-          (let ((original-implementations inf-ruby-implementations))
-            (setq inf-ruby-implementations
-                  (cons `("bundler-compose" .
-                          ("bundle" "compose" "Gemfile" ,my/robe-gemfile "--exec" "ruby"))
-                        inf-ruby-implementations))
-            ;; Start robe with bundler-compose
-            (let ((inf-ruby-default-implementation "bundler-compose"))
-              (robe-start))
-            ;; Restore original implementations
-            (setq inf-ruby-implementations original-implementations)))
-      (progn
-        (message "bundler-compose not available, using regular robe-start")
-        (robe-start))))
+    (let ((default-directory (my/project-root)))
+      (condition-case err
+          (if (and (file-exists-p my/robe-gemfile)
+                   (my/bundler-compose-available-p))
+              (let ((cmd (mapconcat #'identity
+                                     (list "bundle" "compose" "Gemfile" my/robe-gemfile "--exec" "irb")
+                                     " "))
+                     (original-implementations inf-ruby-implementations))
+                (setq inf-ruby-implementations
+                      (cons (cons "bundler-compose" cmd) inf-ruby-implementations))
+                (let ((inf-ruby-default-implementation "bundler-compose"))
+                  (robe-start))
+                (setq inf-ruby-implementations original-implementations))
+            (let ((inf-ruby-default-implementation
+                   (if (my/bundler-usable-p) "bundler" "ruby")))
+              (robe-start)))
+        (error
+         (message "Robe start error: %s" (error-message-string err))))))
 
   (defun my/robe-start-maybe ()
-    "Start robe if not already running in Ruby buffers."
-    (when (and (not (robe-running-p))
-               (derived-mode-p 'ruby-ts-mode 'ruby-mode))
-      (my/robe-start-with-compose)))
+    "Start robe if not already running in Ruby buffers, after idle."
+    (when (and (derived-mode-p 'ruby-ts-mode 'ruby-mode)
+               (not (robe-running-p)))
+      (run-with-idle-timer 0.5 nil #'my/robe-start-with-compose)))
 
   :bind (:map robe-mode-map
               ("C-c r j" . robe-jump)
@@ -423,7 +442,6 @@
           (python . ("https://github.com/tree-sitter/tree-sitter-python"))
           (ruby . ("https://github.com/tree-sitter/tree-sitter-ruby"))
           (rust . ("https://github.com/tree-sitter/tree-sitter-rust"))
-          (terraform . ("https://github.com/MichaHoffmann/tree-sitter-hcl"))
           (toml . ("https://github.com/tree-sitter/tree-sitter-toml"))
           (tsx . ("https://github.com/tree-sitter/tree-sitter-typescript" nil "tsx/src"))
           (typescript . ("https://github.com/tree-sitter/tree-sitter-typescript" nil "typescript/src"))
@@ -456,8 +474,6 @@
           (python-mode . python-ts-mode)
           (ruby-mode . ruby-ts-mode)
           (rust-mode . rust-ts-mode)
-          (terraform-mode . terraform-ts-mode)
-          (hcl-mode . terraform-ts-mode)
           (toml-mode . toml-ts-mode)
           (typescript-mode . typescript-ts-mode)
           (yaml-mode . yaml-ts-mode)))
@@ -477,10 +493,7 @@
   (add-to-list 'auto-mode-alist '("README\\.md\\'" . markdown-ts-mode))
   (add-to-list 'auto-mode-alist '("\\.html\\'" . html-ts-mode))
   (add-to-list 'auto-mode-alist '("\\.htm\\'" . html-ts-mode))
-  (add-to-list 'auto-mode-alist '("\\.erb\\'" . ruby-ts-mode)) ; ERB is Ruby with HTML
-  (add-to-list 'auto-mode-alist '("\\.hcl\\'" . terraform-ts-mode))
-  (add-to-list 'auto-mode-alist '("\\.tf\\'" . terraform-ts-mode))
-  (add-to-list 'auto-mode-alist '("\\.tfvars\\'" . terraform-ts-mode))
+  (add-to-list 'auto-mode-alist '("\\.erb\\'" . ruby-ts-mode))
   (add-to-list 'auto-mode-alist '("\\.py\\'" . python-ts-mode))
   (add-to-list 'auto-mode-alist '("\\.pyi\\'" . python-ts-mode))
   (add-to-list 'auto-mode-alist '("\\.json\\'" . json-ts-mode))
@@ -601,9 +614,44 @@
         gptel-use-curl t
         gptel-stream t)
 
+  ;; Custom tools for enhanced functionality
+  (defun my/run-shell-command (command)
+    "Run a shell command and return its output."
+    (shell-command-to-string command))
+
+  (defun my/list-project-files ()
+    "List files in the current project."
+    (when-let ((project (project-current)))
+      (mapcar #'file-relative-name
+              (project-files project))))
+
+  (defun my/get-ruby-version ()
+    "Get the current Ruby version in the project."
+    (let ((default-directory (or (vc-root-dir) default-directory)))
+      (shell-command-to-string "ruby --version")))
+
+  ;; Define custom tools (if gptel-make-tool is available)
+  (when (fboundp 'gptel-make-tool)
+    (gptel-make-tool
+     :name "shell_command"
+     :function #'my/run-shell-command
+     :description "Execute a shell command and return its output."
+     :args '((:name "command" :type string :description "The shell command to execute")))
+
+    (gptel-make-tool
+     :name "list_project_files"
+     :function #'my/list-project-files
+     :description "List all files in the current project.")
+
+    (gptel-make-tool
+     :name "ruby_version"
+     :function #'my/get-ruby-version
+     :description "Get the Ruby version used in the current project."))
+
   :bind (("C-c g g" . gptel)                     ; Open gptel chat
          ("C-c g s" . gptel-send)                ; Send current region/buffer
          ("C-c g m" . gptel-menu)                ; Open gptel transient menu
+         ("C-c g t" . gptel-tools)               ; Access tools menu (if available)
          ("C-c g r" . gptel-rewrite-and-replace) ; Rewrite and replace region
          ("C-c g k" . gptel-abort)               ; Abort current request
          ("C-c g n" . gptel-context-add-buffer)  ; Add buffer to context
@@ -658,11 +706,83 @@
   ; (add-to-list 'default-frame-alist '(fullscreen . fullscreen))
 
   (keymap-global-set "M-/" 'comment-or-uncomment-region)
-  (keymap-global-set "<f19> <left>" 'previous-buffer)
-  (keymap-global-set "<f19> <right>" 'next-buffer)
-  (keymap-global-set "<f19> r" 'kmacro-start-macro)
-  (keymap-global-set "<f19> e" 'kmacro-end-macro)
-  (keymap-global-set "<f19> SPC" 'kmacro-end-or-call-macro))
+
+  ;; === F19 DEVELOPER SHORTCUTS ===
+  ;; Your caps-lock → F19 super shortcuts for maximum productivity!
+
+  ;; === PROJECT & FILE NAVIGATION ===
+  (keymap-global-set "<f19> p" 'project-find-file)          ; Find file in project
+  (keymap-global-set "<f19> t" 'treemacs)                   ; Toggle file tree
+  (keymap-global-set "<f19> b" 'ivy-switch-buffer)          ; Switch buffer
+  (keymap-global-set "<f19> k" 'kill-this-buffer)           ; Kill current buffer
+  (keymap-global-set "<f19> w" 'save-buffer)                ; Save file
+  (keymap-global-set "<f19> <left>" 'previous-buffer)       ; Previous buffer (existing)
+  (keymap-global-set "<f19> <right>" 'next-buffer)          ; Next buffer (existing)
+  (keymap-global-set "<f19> d" 'counsel-git)                ; Git files (existing)
+  (keymap-global-set "<f19> f" 'counsel-git-grep)           ; Git grep (existing)
+
+  ;; === GIT OPERATIONS ===
+  (keymap-global-set "<f19> g s" 'magit-status)             ; Git status
+  (keymap-global-set "<f19> g c" 'magit-commit)             ; Git commit
+  (keymap-global-set "<f19> g p" 'magit-push)               ; Git push
+  (keymap-global-set "<f19> g l" 'magit-log-all)            ; Git log
+  (keymap-global-set "<f19> g b" 'magit-blame)              ; Git blame
+  (keymap-global-set "<f19> g f" 'magit-pull)               ; Git fetch/pull
+
+  ;; === AI/GPT ASSISTANCE ===
+  (keymap-global-set "<f19> a g" 'gptel)                    ; General AI chat
+  (keymap-global-set "<f19> a r" 'gptel-rewrite-and-replace) ; AI rewrite
+  (keymap-global-set "<f19> a s" 'gptel-send)               ; Send to AI
+  (keymap-global-set "<f19> a m" 'gptel-menu)               ; AI menu
+
+  ;; === DEVELOPMENT TOOLS ===
+  (keymap-global-set "<f19> c c" 'compile)                  ; Compile project
+  (keymap-global-set "<f19> c r" (lambda () (interactive)   ; Run Ruby/Rails tests
+                                    (if (file-exists-p "Gemfile")
+                                        (compile "bundle exec rspec")
+                                      (compile "ruby -I test test/"))))
+  (keymap-global-set "<f19> c d" 'docker)                   ; Docker management
+  (keymap-global-set "<f19> c f" 'my/ruby-format-buffer)    ; Format with StandardRB
+  (keymap-global-set "<f19> c l" 'flycheck-list-errors)     ; List linting errors
+  (keymap-global-set "<f19> c t" 'vterm)                    ; Terminal
+
+  ;; === WINDOW & BUFFER MANAGEMENT ===
+  (keymap-global-set "<f19> o" 'other-window)               ; Switch to other window
+  (keymap-global-set "<f19> 1" 'delete-other-windows)       ; Single window
+  (keymap-global-set "<f19> 2" 'split-window-below)         ; Split horizontal
+  (keymap-global-set "<f19> 3" 'split-window-right)         ; Split vertical
+  (keymap-global-set "<f19> 0" 'delete-window)              ; Delete current window
+  (keymap-global-set "<f19> =" 'balance-windows)            ; Balance window sizes
+
+  ;; === MACROS & AUTOMATION ===
+  (keymap-global-set "<f19> r" 'kmacro-start-macro)         ; Record macro (existing)
+  (keymap-global-set "<f19> e" 'kmacro-end-macro)           ; End macro (existing)
+  (keymap-global-set "<f19> SPC" 'kmacro-end-or-call-macro) ; Call macro (existing)
+  (keymap-global-set "<f19> m" 'kmacro-name-last-macro)     ; Name last macro
+
+  ;; === QUICK ACTIONS ===
+  (keymap-global-set "<f19> ;" 'comment-or-uncomment-region) ; Comment/uncomment
+  (keymap-global-set "<f19> u" 'undo)                       ; Undo
+  (keymap-global-set "<f19> /" 'swiper)                     ; Search in buffer
+  (keymap-global-set "<f19> ?" 'which-key-show-top-level)   ; Show all shortcuts
+  (keymap-global-set "<f19> i" 'imenu)                      ; Jump to definition
+  (keymap-global-set "<f19> j" 'avy-goto-char)              ; Jump to character
+  (keymap-global-set "<f19> l" 'goto-line)                  ; Go to line
+  (keymap-global-set "<f19> x" 'execute-extended-command)   ; M-x alternative
+  (keymap-global-set "<f19> q" 'keyboard-quit)              ; Quit/cancel
+
+  ;; === RUBY/RAILS SPECIFIC ===
+  (keymap-global-set "<f19> R r" 'robe-jump)                ; Jump to Ruby definition
+  (keymap-global-set "<f19> R d" 'robe-doc)                 ; Ruby documentation
+  (keymap-global-set "<f19> R s" 'my/robe-start-with-compose) ; Start Robe
+  (keymap-global-set "<f19> R c" (lambda () (interactive)   ; Rails console
+                                    (if (file-exists-p "bin/rails")
+                                        (vterm-other-window "bundle exec rails console")
+                                      (message "Not in a Rails project"))))
+
+  ;; === SPECIAL FUNCTIONS ===
+  (keymap-global-set "<f19> ESC" 'keyboard-escape-quit)     ; Ultimate escape
+  (keymap-global-set "<f19> <f19>" 'execute-extended-command)) ; Double-tap for M-x
 
 (provide 'init)
 ;;; init.el ends here
