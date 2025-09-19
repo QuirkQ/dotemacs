@@ -46,6 +46,10 @@
 (setenv "PATH" (concat (getenv "PATH") ":/Users/quint.pieters/.docker/bin"))
 (add-to-list 'exec-path "/Users/quint.pieters/.docker/bin")
 
+;; Add user local bin to Emacs PATH (for pipx/uv-installed tools like aider)
+(setenv "PATH" (concat (getenv "PATH") ":/Users/quint.pieters/.local/bin"))
+(add-to-list 'exec-path "/Users/quint.pieters/.local/bin")
+
 ;; mise - https://github.com/liuyinz/mise.el
 (use-package mise
   :straight (mise :type git :host github :repo "liuyinz/mise.el")
@@ -271,12 +275,7 @@
   :ensure t
   :straight (robe :type git :host github :repo "dgutov/robe")
   :after company
-  :hook ((ruby-ts-mode . robe-mode)
-         (ruby-mode . robe-mode)
-         (ruby-ts-mode . my/setup-robe-company)
-         (ruby-mode . my/setup-robe-company)
-         (ruby-ts-mode . my/robe-start-maybe)
-         (ruby-mode . my/robe-start-maybe))
+  :hook ((robe-mode . my/setup-robe-company))
   :config
   ;; Set up company-robe backend for Ruby modes specifically
   (defun my/setup-robe-company ()
@@ -335,11 +334,7 @@
         (error
          (message "Robe start error: %s" (error-message-string err))))))
 
-  (defun my/robe-start-maybe ()
-    "Start robe if not already running in Ruby buffers, after idle."
-    (when (and (derived-mode-p 'ruby-ts-mode 'ruby-mode)
-               (not (robe-running-p)))
-      (run-with-idle-timer 0.5 nil #'my/robe-start-with-compose)))
+  ;; No auto-start; use keybinding to start Robe per project
 
   :bind (:map robe-mode-map
               ("C-c r j" . robe-jump)
@@ -389,18 +384,10 @@
 (use-package ruby-mode
   :ensure nil
   :straight nil
-  :hook ((ruby-ts-mode . my/setup-ruby-standardrb-formatting)
-         (ruby-mode . my/setup-ruby-standardrb-formatting))
   :config
-  ;; Set up standardrb formatting for Ruby files
-  (defun my/setup-ruby-standardrb-formatting ()
-    "Set up standardrb formatting for Ruby files."
-    (when (derived-mode-p 'ruby-ts-mode 'ruby-mode)
-      ;; Format with standardrb on save
-      (add-hook 'before-save-hook #'my/ruby-format-with-standardrb nil t)))
-
-  (defun my/ruby-format-with-standardrb ()
-    "Format current Ruby buffer with standardrb."
+  (defun my/ruby-format-buffer ()
+    "Manually format current Ruby buffer with standardrb."
+    (interactive)
     (when (and (derived-mode-p 'ruby-ts-mode 'ruby-mode)
                (buffer-file-name)
                (or (executable-find "standardrb")
@@ -412,12 +399,7 @@
                        "standardrb --fix")))
         (shell-command (format "%s %s" command (shell-quote-argument (buffer-file-name))))
         ;; Revert buffer to show formatted changes
-        (revert-buffer :ignore-auto :noconfirm))))
-
-  (defun my/ruby-format-buffer ()
-    "Manually format current Ruby buffer with standardrb."
-    (interactive)
-    (my/ruby-format-with-standardrb)))
+        (revert-buffer :ignore-auto :noconfirm)))))
 
 ;; Tree-sitter configuration
 (use-package treesit
@@ -568,94 +550,43 @@
          ("C-c m n" . multi-vterm-next)
          ("C-c m p" . multi-vterm-prev)))
 
-;; gptel : https://github.com/karthink/gptel
-(use-package gptel
-  :ensure t
-  :straight (gptel :type git :host github :repo "karthink/gptel")
-  :config
-  ;; OpenRouter offers an OpenAI compatible API
-  (setq gptel-model 'openai/gpt-5
-        gptel-backend
-        (gptel-make-openai "OpenRouter"               ;Any name you want
-          :host "openrouter.ai"
-          :endpoint "/api/v1/chat/completions"
-          :stream t
-          :key (or (getenv "OPENROUTER_API_KEY") 'gptel-api-key)
-          :models '(x-ai/grok-code-fast-1
-                    anthropic/claude-sonnet-4
-                    google/gemini-2.5-flash
-                    google/gemini-2.5-pro
-                    openai/gpt-5
-                    deepseek/deepseek-chat-v3.1:free)))
+;; aidermacs: https://github.com/MatthewZMD/aidermacs
+(use-package aidermacs
+  :straight (aidermacs :type git :host github :repo "MatthewZMD/aidermacs")
+  :init
+  ;; Route Aider through OpenRouter (OpenAI-compatible)
+  (setenv "OPENAI_API_BASE" "https://openrouter.ai/api/v1")
+  (when-let ((key (getenv "OPENROUTER_API_KEY")))
+    (setenv "OPENAI_API_KEY" key))
+  :custom
+  ;; Use vshell backend (install vshell from MELPA if you don't have it)
+  (aidermacs-terminal-backend 'vterm)
+  ;; Aider binary (pipx/pip install aider-chat)
+  (aidermacs-program (or (executable-find "aider") (expand-file-name "~/.local/bin/aider")))
+  ;; Pick any OpenRouter model ID you want
+  (aidermacs-default-model "openai/gpt-5")
 
-  ;; Set up presets for different use cases
-  (gptel-make-preset 'coding
-    :description "Optimized for coding tasks"
-    :backend gptel-backend
-    :model 'anthropic/claude-sonnet-4
-    :system "You are an expert programmer. Provide clean, well-documented code with explanations."
-    :temperature 0.3)
+  ;; Helpers to drop files from Aider's context
+  (defun my/aidermacs-drop-current-file ()
+    "Remove current file from Aider context."
+    (interactive)
+    (cond
+     ((not buffer-file-name) (user-error "No file associated with this buffer"))
+     ((fboundp 'aidermacs-drop-file) (aidermacs-drop-file buffer-file-name))
+     (t (user-error "Function aidermacs-drop-file not available; update aidermacs"))))
 
-  (gptel-make-preset 'writing
-    :description "For writing and editing tasks"
-    :backend gptel-backend
-    :model 'openai/gpt-5
-    :system "You are a skilled writer and editor. Help improve clarity, style, and flow."
-    :temperature 0.7)
+  (defun my/aidermacs-drop-all ()
+    "Remove all files from Aider context."
+    (interactive)
+    (if (fboundp 'aidermacs-drop-all)
+	(aidermacs-drop-all)
+      (user-error "Function aidermacs-drop-all not available; update aidermacs")))
 
-  (gptel-make-preset 'explain
-    :description "Simple explanations"
-    :backend gptel-backend
-    :model 'google/gemini-2.5-flash
-    :system "Explain this clearly and concisely to someone learning the topic.")
-
-  ;; General settings
-  (setq gptel-default-mode 'org-mode
-        gptel-use-curl t
-        gptel-stream t)
-
-  ;; Custom tools for enhanced functionality
-  (defun my/run-shell-command (command)
-    "Run a shell command and return its output."
-    (shell-command-to-string command))
-
-  (defun my/list-project-files ()
-    "List files in the current project."
-    (when-let ((project (project-current)))
-      (mapcar #'file-relative-name
-              (project-files project))))
-
-  (defun my/get-ruby-version ()
-    "Get the current Ruby version in the project."
-    (let ((default-directory (or (vc-root-dir) default-directory)))
-      (shell-command-to-string "ruby --version")))
-
-  ;; Define custom tools (if gptel-make-tool is available)
-  (when (fboundp 'gptel-make-tool)
-    (gptel-make-tool
-     :name "shell_command"
-     :function #'my/run-shell-command
-     :description "Execute a shell command and return its output."
-     :args '((:name "command" :type string :description "The shell command to execute")))
-
-    (gptel-make-tool
-     :name "list_project_files"
-     :function #'my/list-project-files
-     :description "List all files in the current project.")
-
-    (gptel-make-tool
-     :name "ruby_version"
-     :function #'my/get-ruby-version
-     :description "Get the Ruby version used in the current project."))
-
-  :bind (("C-c g g" . gptel)                     ; Open gptel chat
-         ("C-c g s" . gptel-send)                ; Send current region/buffer
-         ("C-c g m" . gptel-menu)                ; Open gptel transient menu
-         ("C-c g t" . gptel-tools)               ; Access tools menu (if available)
-         ("C-c g r" . gptel-rewrite-and-replace) ; Rewrite and replace region
-         ("C-c g k" . gptel-abort)               ; Abort current request
-         ("C-c g n" . gptel-context-add-buffer)  ; Add buffer to context
-         ("C-c g f" . gptel-context-add-file)))  ; Add file to context
+  :bind (("C-c a a" . aidermacs-run)                ; start Aider in project
+         ("C-c a s" . aidermacs-question-code)      ; ask about region/code
+         ("C-c a f" . aidermacs-add-file)           ; add file (pick)
+         ("C-c a b" . aidermacs-add-current-file)   ; add current buffer's file
+         ("C-c a k" . aidermacs-exit)))             ; quit session
 
 ;; My own custom configuration
 (use-package emacs
@@ -730,10 +661,13 @@
   (keymap-global-set "<f19> g f" 'magit-pull)               ; Git fetch/pull
 
   ;; === AI/GPT ASSISTANCE ===
-  (keymap-global-set "<f19> a g" 'gptel)                    ; General AI chat
-  (keymap-global-set "<f19> a r" 'gptel-rewrite-and-replace) ; AI rewrite
-  (keymap-global-set "<f19> a s" 'gptel-send)               ; Send to AI
-  (keymap-global-set "<f19> a m" 'gptel-menu)               ; AI menu
+  (keymap-global-set "<f19> a g" 'aidermacs-run)               ; start Aider
+  (keymap-global-set "<f19> a s" 'aidermacs-question-code)     ; ask about region
+  (keymap-global-set "<f19> a f" 'aidermacs-add-file)          ; add file
+  (keymap-global-set "<f19> a b" 'aidermacs-add-current-file)  ; add current buffer's file
+  (keymap-global-set "<f19> a r" 'aidermacs-drop-current-file) ; remove current file
+  (keymap-global-set "<f19> a R" 'aidermacs-drop-all-files)    ; remove all files
+  (keymap-global-set "<f19> a k" 'aidermacs-exit)              ; quit
 
   ;; === DEVELOPMENT TOOLS ===
   (keymap-global-set "<f19> c c" 'compile)                  ; Compile project
