@@ -39,10 +39,13 @@ I've mapped my **Caps Lock** key to **F19** for lightning-fast development short
 
 | Shortcut | Command | Description |
 |----------|---------|-------------|
-| `F19 a g` | `gptel` | Start AI chat with current model |
-| `F19 a r` | `gptel-rewrite-and-replace` | AI rewrite selection |
-| `F19 a s` | `gptel-send` | Send text to AI |
-| `F19 a m` | `gptel-menu` | Open AI options menu (change models, presets) |
+| `F19 a g` | `aidermacs-start` | Start Aidermacs (Aider) in the project |
+| `F19 a s` | `aidermacs-ask-about-region` | Ask AI about the selected region |
+| `F19 a f` | `aidermacs-add-file` | Add current file to Aider context |
+| `F19 a b` | `aidermacs-add-buffer` | Add current buffer to Aider context |
+| `F19 a r` | `my/aidermacs-drop-current-file` | Remove current file from Aider context |
+| `F19 a R` | `my/aidermacs-drop-all` | Remove all files from Aider context |
+| `F19 a k` | `aidermacs-quit` | Quit Aidermacs session |
 
 ### 🛠️ Development Tools
 
@@ -127,8 +130,8 @@ I've mapped my **Caps Lock** key to **F19** for lightning-fast development short
 - **StandardRB**: Ruby code formatting
 
 ### AI Integration
-- **GPtel**: ChatGPT/Claude integration with presets
-- Supports multiple AI models via OpenRouter
+- **Aidermacs**: Emacs-native Aider integration for AI pair programming
+- Supports OpenAI-compatible providers via OpenRouter
 
 ### Terminal & Docker
 - **VTerm**: Fast terminal emulator
@@ -139,7 +142,7 @@ I've mapped my **Caps Lock** key to **F19** for lightning-fast development short
 
 1. **Press `F19 ?`** to see all available shortcuts
 2. **Use `F19 p`** to quickly find files in your project
-3. **Try `F19 a g`** for AI chat, or `F19 a m` for AI menu
+3. **Try `F19 a g`** to start Aidermacs; use `F19 a s` to ask about a region
 4. **Use `F19 g s`** for git operations
 5. **Press `F19 t`** to toggle the file tree
 
@@ -155,10 +158,10 @@ I've mapped my **Caps Lock** key to **F19** for lightning-fast development short
 
 - **Macros**: Record repetitive tasks with `F19 r`, stop with `F19 e`, replay with `F19 SPC`
 - **AI Workflows**:
-  - `F19 a g` to start AI chat with current model
-  - `F19 a m` to access the full AI menu (change models, apply presets)
-  - `F19 a r` to rewrite/refactor selected text in-place
-  - Use `@coding`, `@explain`, or `@writing` in your prompts to apply presets
+  - `F19 a g` to start Aidermacs in the project
+  - `F19 a f` / `F19 a b` to add current file/buffer to context
+  - `F19 a s` to ask about the selected region
+  - `F19 a r` / `F19 a R` to drop current/all files from context
 - **Project Navigation**: Use `F19 d` for git files, `F19 p` for all project files
 - **Window Management**: `F19 2` and `F19 3` for splits, `F19 1` to focus
 - **Ruby Development**: `F19 c f` formats with StandardRB, `F19 c r` runs tests
