@@ -331,13 +331,16 @@ daemon with no frame yet; callers must cope with that."
          (ruby-mode . eglot-ensure)
          (eglot-managed-mode . my/eglot-format-on-save))
   :config
-  (defconst my/ruby-lsp-shim
-    (expand-file-name "bin/mise-ruby-lsp" my-emacs-dir)
-    "Wrapper that runs ruby-lsp under mise with the JFrog Bundler token set.")
-
   ;; Eglot ships a solargraph entry for Ruby; add-to-list puts ours first.
+  ;;
+  ;; A *function* contact, not a fixed command line. Eglot calls it from
+  ;; `eglot--guess-contact' with the project it is about to connect for
+  ;; (eglot.el:1583), in the buffer that triggered the connection and after
+  ;; `hack-local-variables' has run -- which is what lets one entry pick a
+  ;; different ruby-lsp working directory per project. See
+  ;; `my/ruby-lsp-contact' further down.
   (add-to-list 'eglot-server-programs
-               `((ruby-ts-mode ruby-mode) . (,my/ruby-lsp-shim)))
+               '((ruby-ts-mode ruby-mode) . my/ruby-lsp-contact))
 
   ;; Flycheck owns diagnostics in this configuration (see the flycheck
   ;; block), and ruby-lsp's own linting would run standardrb a second time
@@ -570,6 +573,119 @@ overwritten instead."
 ;; `eglot-ensure' the eglot block added above.
 (add-hook 'ruby-ts-mode-hook #'my/ruby-setup-jfrog-env)
 (add-hook 'ruby-mode-hook #'my/ruby-setup-jfrog-env)
+
+;; Which bundle ruby-lsp indexes.
+;;
+;; In a monorepo the repository root is not necessarily the bundle you want
+;; the language server to reason about. epoxy is the case in point: its root
+;; Gemfile is `gemspec' plus an `eval_gemfile' of every gems/*/Gemfile and
+;; carries no activerecord, while integration/ is a full Rails 8 app that
+;; depends on every epoxy gem by `path:'. Rooted at the repository, ruby-lsp
+;; resolves `ActiveRecord::Base' in integration/app/models/note.rb to a test
+;; stub in gems/fragmentary/fragments/cupido-push/spec/support/prerequisites.rb
+;; -- the only `ActiveRecord' the index has -- and never loads ruby-lsp-rails.
+;;
+;; The lever is the server process's *working directory*, not BUNDLE_GEMFILE.
+;; `RubyLsp::SetupBundler' does read `Bundler.default_gemfile', which honours
+;; BUNDLE_GEMFILE, but it never gets that far: exe/ruby-lsp wraps the whole
+;; composed-bundle setup in `if ENV["BUNDLE_GEMFILE"].nil?' and re-execs under
+;; `bundle exec' only from inside that branch. Presetting the variable
+;; therefore *skips* bundle composition altogether -- measured against epoxy,
+;; that dropped the server out of any bundle at all: 142 "already initialized
+;; constant" warnings from duplicate RuboCop activation, the Standard Ruby
+;; addon activating but never initializing, and `ActiveRecord::Base' still
+;; landing on the spec stub. It makes things worse, not better.
+;;
+;; ruby-lsp takes its project from `Dir.pwd' in both places that matter --
+;; `SetupBundler.new(Dir.pwd)' in exe/ruby-lsp, which is what detects the
+;; Rails app and adds ruby-lsp-rails to the composed Gemfile, and
+;; `RubyIndexer::Configuration#@workspace_path' -- so pointing the process at
+;; integration/ is the whole fix. Eglot's own cwd is `(project-root project)'
+;; (eglot.el:1814), which we do not want to move: it is what keeps every
+;; buffer under gems/*/lib on one server.
+;;
+;; The tradeoff is real and worth knowing: with the working directory in
+;; integration/, the indexer's workspace glob covers integration/** and the
+;; `lib' require path of each path gem -- so gems/*/lib still resolves, but
+;; the repository's own lib/ and every gems/*/spec stop being indexed.
+
+(defconst my/ruby-lsp-shim
+  (expand-file-name "bin/mise-ruby-lsp" my-emacs-dir)
+  "Wrapper that runs ruby-lsp under mise with the JFrog Bundler token set.")
+
+(defconst my/env-executable "/usr/bin/env"
+  "Absolute path to env(1), used only for its -C flag.
+Not `executable-find': a GUI Emacs starts with no shell PATH. macOS's
+env documents -C -- \"usage: env [-0iv] [-C workdir] ...\" -- passes the
+whole inherited environment through untouched, and execs its target, so
+this buys a working directory at the cost of no extra process and none
+of the quoting a `sh -c \"cd ... && exec ...\"' would need.")
+
+(defvar my/ruby-lsp-directory nil
+  "Directory ruby-lsp should run in, or nil for the project root.
+A string, absolute or relative to the project root. Marked
+`safe-local-variable', so a repository's .dir-locals.el can set it
+without prompting -- and .dir-locals.el is globally git-ignored here, so
+that works in a shared repository without dirtying it.")
+
+(put 'my/ruby-lsp-directory 'safe-local-variable #'stringp)
+
+(defconst my/ruby-lsp-directory-overrides
+  '(("epoxy" . "integration"))
+  "Alist of (PROJECT-NAME . DIRECTORY) ruby-lsp working directories.
+PROJECT-NAME is matched against the last component of the project root,
+so no absolute path belongs in here. DIRECTORY is read exactly like
+`my/ruby-lsp-directory', which takes precedence over this alist. For
+repositories where a .dir-locals.el is unwelcome.")
+
+(defun my/ruby-lsp-directory (root)
+  "Absolute directory ruby-lsp should run in for the project at ROOT.
+
+Nil -- meaning \"just use ROOT\" -- unless an override names a directory
+that exists and holds a Gemfile. A stale override has to degrade to
+normal behaviour: pointing the server at a directory with no bundle
+would leave it with no composed bundle and no index worth having, which
+is a worse failure than the one the override is there to fix."
+  (let* ((name (or my/ruby-lsp-directory
+                   (cdr (assoc (file-name-nondirectory
+                                (directory-file-name root))
+                               my/ruby-lsp-directory-overrides))))
+         (dir (and name (file-name-as-directory
+                         (expand-file-name name root)))))
+    (and dir
+         (file-directory-p dir)
+         (file-regular-p (expand-file-name "Gemfile" dir))
+         dir)))
+
+(defun my/ruby-lsp-contact (&optional _interactive project)
+  "Return the command eglot should run to start ruby-lsp for PROJECT.
+
+Eglot funcalls this from `eglot--guess-contact', which runs in the Ruby
+buffer from `post-command-hook' by way of `eglot-ensure' -- late enough
+that `hack-local-variables' has already applied any .dir-locals.el, so
+`my/ruby-lsp-directory' is readable here even though it would not be in
+a major-mode hook.
+
+PROJECT is the project eglot is about to root the server at, and
+`project-root' is exactly the directory the server would otherwise start
+in; env -C then overrides that directory alone, leaving eglot's
+workspace root -- and so the set of buffers this one server manages --
+untouched.
+
+`project-root' and not `my/ruby-project-root' on purpose, and the
+difference matters in exactly the repositories this exists for: every
+epoxy sub-gem carries its own Gemfile, so for gems/core/lib/epoxy/boot.rb
+`my/ruby-project-root' stops at gems/core/ while eglot roots the server
+at the repository. Keying the override off anything but the root eglot
+actually uses would leave half a monorepo's buffers unmatched."
+  (let* ((root (expand-file-name (if project
+                                     (project-root project)
+                                   (my/ruby-project-root))))
+         (dir (my/ruby-lsp-directory root)))
+    (if dir
+        (list my/env-executable "-C" (directory-file-name dir)
+              my/ruby-lsp-shim)
+      (list my/ruby-lsp-shim))))
 
 ;; flycheck : https://github.com/flycheck/flycheck
 (use-package flycheck
