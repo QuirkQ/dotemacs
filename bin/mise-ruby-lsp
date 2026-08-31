@@ -11,7 +11,10 @@
 #   2. Bundler needs the Artifactory credential to resolve nedap.jfrog.io
 #      gems, and it lives in 1Password. A GUI-launched Emacs has no shell
 #      environment, so ~/.config/zsh never runs and the `tokens` function
-#      never fires.
+#      never fires. Emacs now reads that token itself, once per session and
+#      only for projects that use the private gem source (my/jfrog-token in
+#      init.el), and exports it into this process's environment -- so the
+#      fallback below is for standalone callers only.
 #
 # Mirrors ~/.local/bin/zed-ruby-lsp. Point Zed's lsp.ruby-lsp.binary.path at
 # this file to keep a single shim under version control.
@@ -25,6 +28,16 @@ CAT=/bin/cat
 RM=/bin/rm
 OP_ACCOUNT=your-account.1password.com
 OP_REF='op://your-vault-uuid/jfrog/token'
+
+# Fast path: the caller already supplied the credential, so there is nothing
+# for `op' to do. This is the case eglot hits -- it launches this shim once
+# per language server (a new project, a server restart, an Emacs restart) and
+# without a cached `op' session token every one of those launches could raise
+# its own biometric prompt. An inherited variable is already exported, so
+# `mise' and `ruby-lsp' see it without any work here.
+if [ -n "${BUNDLE_NEDAP__JFROG__IO:-}" ]; then
+  exec "$MISE" exec -- ruby-lsp "$@"
+fi
 
 # `op' stderr must not share a stream with the token. With `2>&1' inside the
 # command substitution, anything op writes to stderr while still exiting 0 --

@@ -424,6 +424,153 @@ hook -- it blocks the first keystroke in every Ruby buffer and pops up
          (expand-file-name "Gemfile" root)
          (concat "^ *gem +['\"]" name "['\"]")))))
 
+;; The JFrog Artifactory credential.
+;;
+;; Bundler needs it to resolve gems from nedap.jfrog.io, and it lives in
+;; 1Password. bin/mise-ruby-lsp used to run `op read' on every launch, and
+;; eglot launches the shim once per language server -- one per project, plus
+;; one after every server restart and every Emacs restart. A GUI Emacs has no
+;; shell session, so there is no `op' session token to reuse and each launch
+;; could raise its own biometric prompt: "I need to re-auth with 1Password on
+;; opening every ruby file". So read the token here instead -- at most once
+;; per Emacs session, and only for projects that actually use the private gem
+;; source -- and hand it to the shim through the server's environment.
+
+(defconst my/jfrog-op-account "your-account.1password.com"
+  "1Password account that holds the JFrog token.")
+
+(defconst my/jfrog-op-reference
+  "op://your-vault-uuid/jfrog/token"
+  "1Password secret reference for the JFrog Artifactory token.
+Only the reference belongs in this repository. The value it resolves to
+must never reach a file, a log, a commit or `message'.")
+
+(defconst my/jfrog-bundle-variable "BUNDLE_NEDAP__JFROG__IO"
+  "Environment variable Bundler reads for nedap.jfrog.io credentials.")
+
+(defconst my/op-executable "/opt/homebrew/bin/op"
+  "Absolute path to the 1Password CLI.
+Not `executable-find': a GUI Emacs starts with no shell PATH, and this
+runs from a mode hook.")
+
+(defconst my/jfrog-source-regexp "nedap\\.jfrog\\.io"
+  "Marker of a project that resolves gems from the private source.")
+
+(defvar my/jfrog-token--cache 'untried
+  "Memoized result of `my/jfrog-token'.
+Three deliberately distinct states: `untried' means `op' has not run
+yet, a string is the token, and nil means `op' ran and failed. Without
+that third state a locked 1Password would send every Ruby buffer back
+to `op' -- exactly the prompt storm this block exists to prevent.")
+
+(defun my/jfrog--report-failure (stderr-file)
+  "Report a failed `op read', quoting only what `op' put in STDERR-FILE.
+The token never travels on stderr, so nothing here can leak it."
+  (let ((detail (or (and (file-regular-p stderr-file)
+                         (ignore-errors
+                           (with-temp-buffer
+                             (insert-file-contents stderr-file)
+                             (string-trim (buffer-string)))))
+                    "")))
+    (message "JFrog token: `op read' failed%s (unlock 1Password and \
+enable its CLI integration, then M-x my/jfrog-token-refresh)"
+             (if (string-empty-p detail) "" (concat " -- " detail)))))
+
+(defun my/jfrog--read-token ()
+  "Run `op read' once and return the token, or nil on any failure.
+Never signals: this is reached from a mode hook, where a signal would
+abort the rest of the hook -- `eglot-ensure' included."
+  (let ((stderr (make-temp-file "my-op-stderr-")))
+    (unwind-protect
+        (with-temp-buffer
+          ;; stdout and stderr must not share a stream. Commit 7ac5243 fixed
+          ;; exactly this in the shim: an `op' banner or deprecation notice
+          ;; written on a zero exit was concatenated onto the token and
+          ;; resurfaced much later as an opaque Bundler 401.
+          (if (eq 0 (ignore-errors
+                      (call-process my/op-executable nil (list t stderr) nil
+                                    "read"
+                                    "--account" my/jfrog-op-account
+                                    my/jfrog-op-reference)))
+              ;; `string-trim': `op' ends the value with a newline, and a
+              ;; newline inside a Bundler credential is another opaque 401.
+              (let ((token (string-trim (buffer-string))))
+                (and (not (string-empty-p token)) token))
+            (my/jfrog--report-failure stderr)
+            nil))
+      (ignore-errors (delete-file stderr)))))
+
+(defun my/jfrog-token ()
+  "Return the JFrog token from 1Password, running `op' at most once.
+
+Synchronous, and deliberately without a timeout: `op' may be sitting on
+a Touch ID prompt, and killing it would cancel the unlock the user is in
+the middle of granting. It runs once per Emacs session, on the first
+buffer of a project that needs the token.
+
+Not `shell-command-to-string': that routes the call through a shell,
+putting the secret reference in the shell's argv and history."
+  (when (eq my/jfrog-token--cache 'untried)
+    (setq my/jfrog-token--cache
+          (and (file-executable-p my/op-executable)
+               (my/jfrog--read-token))))
+  my/jfrog-token--cache)
+
+(defun my/jfrog-token-refresh ()
+  "Forget the cached JFrog token and read it from 1Password again.
+For after the token rotates, or after unlocking 1Password following a
+failed read. Buffers that already carry the old value pick the new one
+up when their language server next restarts."
+  (interactive)
+  (setq my/jfrog-token--cache 'untried)
+  (message (if (my/jfrog-token)
+               "JFrog token refreshed"
+             "JFrog token still unavailable")))
+
+(defun my/ruby-project-uses-jfrog-p (root)
+  "Non-nil when the Ruby project at ROOT pulls gems from nedap.jfrog.io.
+Most projects do not, and those must never reach 1Password at all.
+Reads Gemfile and Gemfile.lock through `my/ruby--file-matches-p', which
+tolerates a missing, unreadable or non-regular file for the same reason
+as `my/ruby-gem-in-project-p'."
+  (or (my/ruby--file-matches-p (expand-file-name "Gemfile" root)
+                               my/jfrog-source-regexp)
+      (my/ruby--file-matches-p (expand-file-name "Gemfile.lock" root)
+                               my/jfrog-source-regexp)))
+
+(defun my/ruby-setup-jfrog-env ()
+  "Give this buffer's subprocesses the JFrog Bundler credential.
+
+`eglot-ensure' does not connect from the mode hook -- it defers to
+`post-command-hook' -- so what the server inherits is the buffer-local
+`process-environment' as it stands then, which is this value.
+
+Consed onto `process-environment', never assigned over it. mise.el sets
+its own buffer-local value from `after-change-major-mode-hook', which
+runs after every mode hook, and `mise--merged-env' appends mise's
+variables in front of whatever it captured as `mise--init-env' -- this
+entry included. Assigning here would drop mise's Ruby off the PATH; and
+setting the variable any later than this hook is what would get it
+overwritten instead."
+  (when (derived-mode-p 'ruby-ts-mode 'ruby-mode)
+    (let ((present (getenv my/jfrog-bundle-variable)))
+      ;; Already set -- by the launch environment, or by this hook on an
+      ;; earlier pass through the same buffer. Matches the shim's own
+      ;; short-circuit, and keeps a re-run from consing a duplicate.
+      (unless (and present (not (string-empty-p present)))
+        (when (my/ruby-project-uses-jfrog-p (my/ruby-project-root))
+          (let ((token (my/jfrog-token)))
+            (when token
+              (setq-local process-environment
+                          (cons (concat my/jfrog-bundle-variable "=" token)
+                                process-environment)))))))))
+
+;; Plain `add-hook', not eglot's `:hook': these must be in place whether or
+;; not eglot has loaded, and `add-hook' prepends, so this runs before the
+;; `eglot-ensure' the eglot block added above.
+(add-hook 'ruby-ts-mode-hook #'my/ruby-setup-jfrog-env)
+(add-hook 'ruby-mode-hook #'my/ruby-setup-jfrog-env)
+
 ;; flycheck : https://github.com/flycheck/flycheck
 (use-package flycheck
   :ensure t
