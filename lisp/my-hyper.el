@@ -42,15 +42,25 @@ Modifiers are in the canonical `key-valid-p' order, A-C-H-M-S-s.")
     ("=" . "+") (";" . ":") ("/" . "?") ("," . "<") ("." . ">"))
   "US-layout glyph produced when Shift is folded into a Hyper chord.")
 
+(defconst my-hyper-ascii-named-keys
+  '("RET" "<return>" "SPC" "ESC" "TAB" "<tab>" "DEL" "<backspace>")
+  "Named keys that are really ASCII characters.
+Shift does not change the character these produce, so Emacs' shift
+translation drops the `S-' bit: Hyper-RET arrives as `C-M-s-<return>',
+not `C-M-S-s-<return>'.  Genuinely non-character keys -- arrows, function
+keys -- do keep `S-'.")
+
 (defun my-hyper-folded-key (key)
   "Return the Shift-folded spelling of KEY, or nil when it has none.
 Punctuation and digits come from `my-hyper-folded-glyphs'; a lone
-lowercase letter folds to its uppercase form.  Named keys such as
-\"<left>\" and \"SPC\" take Shift as a real modifier and fold to nil."
+lowercase letter folds to its uppercase form; the ASCII named keys in
+`my-hyper-ascii-named-keys' fold to themselves, because Shift leaves
+their character alone and Emacs therefore reports no `S-'."
   (or (cdr (assoc key my-hyper-folded-glyphs))
       (and (= (length key) 1)
            (string-match-p "\\`[a-z]\\'" key)
-           (upcase key))))
+           (upcase key))
+      (car (member key my-hyper-ascii-named-keys))))
 
 (defun my-hyper-set (keys command)
   "Bind KEYS under the Hyper key to COMMAND.
@@ -58,18 +68,24 @@ KEYS is a space-separated sequence whose FIRST key carries the Hyper
 chord and whose remaining keys are typed plain: \"p\" becomes Hyper-p,
 \"g s\" becomes Hyper-g followed by s.
 
-Every spelling Emacs might plausibly deliver is bound: the canonical
-`my-hyper-mod' form, and -- when the head key has a Shift-folded
-spelling -- that glyph under both `my-hyper-folded-mod' and
-`my-hyper-mod'."
+Which spelling macOS actually delivers cannot be predicted per key: it
+depends on whether Shift reaches the application, whether the layout
+substitutes a shifted glyph, and whether Emacs' shift translation drops
+the `S-' bit.  Guessing produced dead keys -- Hyper-RET arrived as
+`C-M-s-<return>' while only `C-M-S-s-<return>' was bound.  So bind the
+whole cross-product of {`my-hyper-mod', `my-hyper-folded-mod'} against
+{KEY, its folded spelling}.  Redundant bindings are harmless: they all
+name the same COMMAND, and `keymap-global-set' is idempotent."
   (let* ((parts (split-string keys " " t))
          (head (car parts))
          (tail (mapconcat (lambda (k) (concat " " k)) (cdr parts) ""))
-         (folded (my-hyper-folded-key head)))
-    (keymap-global-set (concat my-hyper-mod head tail) command)
-    (when folded
-      (keymap-global-set (concat my-hyper-folded-mod folded tail) command)
-      (keymap-global-set (concat my-hyper-mod folded tail) command))))
+         (folded (my-hyper-folded-key head))
+         (heads (delete-dups (delq nil (list head folded)))))
+    (dolist (mod (list my-hyper-mod my-hyper-folded-mod))
+      (dolist (h heads)
+        (let ((spelling (concat mod h tail)))
+          (when (key-valid-p spelling)
+            (keymap-global-set spelling command)))))))
 
 ;; === PROJECT & FILE NAVIGATION ===
 (my-hyper-set "p" #'project-find-file)
@@ -146,6 +162,9 @@ spelling -- that glyph under both `my-hyper-folded-mod' and
 ;; jump-to-definition and jump-back carries between the two editors.
 (my-hyper-set "." #'xref-find-definitions)
 (my-hyper-set "," #'xref-go-back)
+;; Zed binds ctrl-alt-shift-cmd-enter to GoToDefinition as a keyboard
+;; "click"; mirror it so the same reflex works here.
+(my-hyper-set "<return>" #'xref-find-definitions)
 
 (provide 'my-hyper)
 ;;; my-hyper.el ends here
