@@ -648,20 +648,55 @@ with `flycheck-command-wrapper-function', which receives the whole argv."
     (user-error "No language server for this buffer")))
 
 (defun my/ruby-run-tests ()
-  "Run the project's Ruby test suite through mise."
+  "Run this project's Ruby test suite through mise.
+
+The runner is picked from what the project actually has, not assumed: a
+.rspec file or `rspec' in the bundle means RSpec, and otherwise a test/
+directory decides between `rails test' and `rake test'. Assuming RSpec
+for every Gemfile handed minitest projects `bundle exec rspec' and a
+compilation buffer full of failure."
   (interactive)
-  (let ((default-directory (my/ruby-project-root)))
-    (compile (if (file-exists-p "Gemfile")
-                 "mise x -- bundle exec rspec"
-               "mise x -- ruby -I test test/"))))
+  (let* ((root (my/ruby-project-root))
+         (default-directory root)
+         (has (lambda (name) (file-exists-p (expand-file-name name root))))
+         (prefix (if (funcall has "Gemfile")
+                     "mise x -- bundle exec "
+                   "mise x -- "))
+         (tests (file-directory-p (expand-file-name "test" root)))
+         (command
+          (cond
+           ((or (funcall has ".rspec")
+                (my/ruby-gem-in-project-p root "rspec")
+                (file-directory-p (expand-file-name "spec" root)))
+            (concat prefix "rspec"))
+           ((and tests (funcall has "bin/rails")) (concat prefix "rails test"))
+           ((and tests (funcall has "Rakefile")) (concat prefix "rake test"))
+           (t (user-error "No RSpec or minitest suite under %s" root)))))
+    (compile command)))
+
+;; Declared so the `let' in `my/rails-console' is a DYNAMIC binding even when
+;; the file is byte-compiled before vterm.el has been loaded; under
+;; lexical-binding a `let' on a not-yet-special symbol binds lexically and
+;; vterm never sees the value. vterm.el owns the real defcustom.
+(defvar vterm-shell)
 
 (defun my/rails-console ()
-  "Open a Rails console for this project in a vterm."
+  "Open a Rails console for this project in a vterm.
+
+`vterm-other-window' takes a buffer name or a session index, not a
+command (its interactive spec is \"P\"; \"with a string prefix arg,
+create a new session with arg as buffer name\"). Passing the command
+string opened a plain `vterm-shell' -- /bin/zsh -- in a buffer literally
+*named* \"mise x -- bundle exec rails console\", with no error and no
+console. The command has to arrive through `vterm-shell'."
   (interactive)
-  (let ((default-directory (my/ruby-project-root)))
-    (if (file-exists-p "bin/rails")
-        (vterm-other-window "mise x -- bundle exec rails console")
-      (user-error "Not in a Rails project"))))
+  (require 'vterm)
+  (let* ((root (my/ruby-project-root))
+         (default-directory root))
+    (unless (file-exists-p (expand-file-name "bin/rails" root))
+      (user-error "Not in a Rails project"))
+    (let ((vterm-shell "mise x -- bundle exec rails console"))
+      (vterm-other-window))))
 
 ;; My own custom configuration
 (use-package emacs
