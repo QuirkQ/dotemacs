@@ -20,17 +20,43 @@ set -eu
 
 OP=/opt/homebrew/bin/op
 MISE=/opt/homebrew/bin/mise
+MKTEMP=/usr/bin/mktemp
+CAT=/bin/cat
+RM=/bin/rm
 OP_ACCOUNT=your-account.1password.com
 OP_REF='op://your-vault-uuid/jfrog/token'
 
-if token=$("$OP" read --account "$OP_ACCOUNT" "$OP_REF" 2>&1); then
+# `op' stderr must not share a stream with the token. With `2>&1' inside the
+# command substitution, anything op writes to stderr while still exiting 0 --
+# an update banner, a deprecation notice -- was concatenated onto the token
+# and exported as BUNDLE_NEDAP__JFROG__IO, resurfacing much later as an opaque
+# Bundler 401 against nedap.jfrog.io. Capture it to a private file instead and
+# splice it only into the failure message.
+if op_err=$("$MKTEMP" "${TMPDIR:-/tmp}/mise-ruby-lsp.XXXXXX" 2>/dev/null); then
+  op_err_sink=$op_err
+else
+  # Same rationale as the token failure below: never take the LSP down.
+  op_err=
+  op_err_sink=/dev/null
+fi
+
+if token=$("$OP" read --account "$OP_ACCOUNT" "$OP_REF" 2>"$op_err_sink"); then
   export BUNDLE_NEDAP__JFROG__IO="$token"
 else
   # Not fatal: ruby-lsp is still useful in projects with no Artifactory
   # gems, and failing here would take the whole LSP session down. Eglot
   # collects this in the *EGLOT (<project>/ruby-ts-mode) stderr* buffer.
-  echo "mise-ruby-lsp: could not read the JFrog token from 1Password: $token" >&2
+  # Everything here goes to stderr: stdout is the JSON-RPC stdio stream.
+  echo "mise-ruby-lsp: could not read the JFrog token from 1Password" >&2
+  if [ -n "$op_err" ]; then
+    echo "mise-ruby-lsp: op said: $("$CAT" "$op_err")" >&2
+  fi
   echo "mise-ruby-lsp: unlock the 1Password app and enable CLI integration" >&2
+fi
+
+# `exec' replaces this process image, so an EXIT trap would never fire.
+if [ -n "$op_err" ]; then
+  "$RM" -f "$op_err"
 fi
 
 exec "$MISE" exec -- ruby-lsp "$@"
