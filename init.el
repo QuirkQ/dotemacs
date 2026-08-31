@@ -12,6 +12,17 @@
 ;; Configuration split out of this file lives in lisp/.
 (add-to-list 'load-path (expand-file-name "lisp" my-emacs-dir))
 
+;; Treat these as built-in so straight.el never installs the GNU ELPA copies.
+;; multi-vterm declares (project "0.3.0") as a dependency, which made straight
+;; clone ELPA `project' and `xref' on top of Emacs 31's own. They then load
+;; *after* the built-ins are already in memory, producing
+;;   Feature `project' loaded from ".../Resources/lisp/progmodes/project.elc"
+;;   is now provided by ".../straight/build/project/project.elc"
+;; and leaving two versions live at once -- which matters here because eglot
+;; and xref are the backbone of the Ruby setup. Must precede the bootstrap.
+(setq straight-built-in-pseudo-packages
+      '(emacs nadvice python image-mode project xref))
+
 ;; Initialise straight.el : https://github.com/radian-software/straight.el
 (defvar bootstrap-version)
 (let ((bootstrap-file
@@ -486,17 +497,22 @@ with `flycheck-command-wrapper-function', which receives the whole argv."
   :ensure t
   :straight (vterm :type git :host github :repo "akermu/emacs-libvterm")
   :hook (vterm-mode . my/vterm-setup)
+  :init
+  ;; These two MUST be set before vterm.el loads. Its module check
+  ;; (vterm.el:136) is a top-level form: it either prompts
+  ;; "Vterm needs `vterm-module' to work.  Compile it now?" or errors outright.
+  ;; In `:config' they land after the load and are useless.
+  ;;
+  ;; Build against the vendored libvterm. Linking the system dylib is the
+  ;; classic Apple-Silicon failure: a stray x86_64 /usr/local/lib/libvterm.dylib
+  ;; gets picked up and the link fails with "building for macOS-arm64 but
+  ;; attempting to link with file built for macOS-x86_64".
+  (setq vterm-always-compile-module t)
+  (setq vterm-module-cmake-args "-DUSE_SYSTEM_LIBVTERM=OFF")
   :config
   (setq vterm-shell "/bin/zsh")
   (setq vterm-max-scrollback 10000)
   (setq vterm-kill-buffer-on-exit t)
-  ;; Build without asking, and against the vendored libvterm. Linking the
-  ;; system dylib is the classic Apple-Silicon failure: a stray x86_64
-  ;; /usr/local/lib/libvterm.dylib gets picked up and the link fails with
-  ;; "building for macOS-arm64 but attempting to link with file built for
-  ;; macOS-x86_64".
-  (setq vterm-always-compile-module t)
-  (setq vterm-module-cmake-args "-DUSE_SYSTEM_LIBVTERM=OFF")
 
   (defun my/vterm-setup ()
     "Drop line numbers and use a Nerd Font so shell icons render."
