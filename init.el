@@ -308,29 +308,44 @@ ruby-lsp picks StandardRB or RuboCop from the project's Gemfile itself."
          (ruby-ts-mode . my/setup-ruby-flycheck)
          (ruby-mode . my/setup-ruby-flycheck))
   :config
-  ;; Set up Ruby checkers to use project-specific tools
+  (defun my/ruby-uses-standard-p (root)
+    "Non-nil when the Ruby project at ROOT lints with StandardRB.
+Decided by reading Gemfile.lock and Gemfile.  The obvious alternative,
+shelling out to `bundle list standard', is a synchronous subprocess on a
+mode hook -- it blocks the first keystroke in every Ruby buffer and pops
+up *Shell Command Output*."
+    (let ((lock (expand-file-name "Gemfile.lock" root))
+          (gemfile (expand-file-name "Gemfile" root)))
+      (cond
+       ((file-readable-p lock)
+        (with-temp-buffer
+          (insert-file-contents lock)
+          (goto-char (point-min))
+          (and (re-search-forward "^ +standard \\((\\|$\\)" nil t) t)))
+       ((file-readable-p gemfile)
+        (with-temp-buffer
+          (insert-file-contents gemfile)
+          (goto-char (point-min))
+          (and (re-search-forward "^ *gem +['\"]standard['\"]" nil t) t)))
+       (t (and (executable-find "standardrb") t)))))
+
   (defun my/setup-ruby-flycheck ()
-    "Configure Ruby checkers for current project."
+    "Run this project's Ruby linter through mise, and Bundler when present.
+Flycheck has no per-checker argument list -- there is no
+`flycheck-...-executable-args' -- so prefixing a checker's command is done
+with `flycheck-command-wrapper-function', which receives the whole argv."
     (when (derived-mode-p 'ruby-ts-mode 'ruby-mode)
-      (let ((project-root (or (vc-root-dir) default-directory))
-            (has-gemfile (file-exists-p "Gemfile")))
-
-        ;; Use bundler if Gemfile exists
-        (if has-gemfile
-            (progn
-              (setq-local flycheck-ruby-standard-executable "bundle")
-              (setq-local flycheck-ruby-standard-executable-args '("exec" "standardrb"))
-              (setq-local flycheck-ruby-rubocop-executable "bundle")
-              (setq-local flycheck-ruby-rubocop-executable-args '("exec" "rubocop")))
-          (progn
-            (setq-local flycheck-ruby-standard-executable "standardrb")
-            (setq-local flycheck-ruby-rubocop-executable "rubocop")))
-
-        ;; Prefer StandardRB over Rubocop
-        (if (or (and has-gemfile (zerop (shell-command "bundle list standard >/dev/null 2>&1")))
-                (executable-find "standardrb"))
-            (setq-local flycheck-checkers '(ruby-standard))
-          (setq-local flycheck-checkers '(ruby-rubocop))))))
+      (let* ((root (or (vc-root-dir) default-directory))
+             (bundled (file-exists-p (expand-file-name "Gemfile" root))))
+        (setq-local flycheck-command-wrapper-function
+                    (lambda (command)
+                      (append '("mise" "x" "--")
+                              (and bundled '("bundle" "exec"))
+                              command)))
+        (setq-local flycheck-checkers
+                    (if (my/ruby-uses-standard-p root)
+                        '(ruby-standard)
+                      '(ruby-rubocop))))))
 
   :bind (("C-c ! l" . flycheck-list-errors)
          ("C-c ! n" . flycheck-next-error)
