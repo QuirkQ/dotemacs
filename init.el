@@ -310,9 +310,80 @@
   (defun my/eglot-format-on-save ()
     "Format Ruby buffers with the language server on save.
 Mirrors \"format_on_save\": \"on\" for Ruby in ~/.config/zed/settings.json.
-ruby-lsp picks StandardRB or RuboCop from the project's Gemfile itself."
+ruby-lsp picks StandardRB or RuboCop from the project's Gemfile itself.
+
+`eglot-managed-mode-hook' fires in BOTH directions -- `define-minor-mode'
+puts a `run-hooks' in the off branch too (eglot.el:2503) -- so this must
+check `eglot--managed-mode' and take the hook back off when the server
+goes away. Without that, every save after a shutdown or crash called
+`eglot-format-buffer' with no connection and printed
+\"No current JSON-RPC connection\"; `before-save-hook' runs inside
+`with-demoted-errors' (files.el), so the save still happened, but the
+error was there on every single save."
     (when (derived-mode-p 'ruby-ts-mode 'ruby-mode)
-      (add-hook 'before-save-hook #'eglot-format-buffer nil t))))
+      (if (bound-and-true-p eglot--managed-mode)
+          (add-hook 'before-save-hook #'eglot-format-buffer nil t)
+        (remove-hook 'before-save-hook #'eglot-format-buffer t)))))
+
+;; Ruby project introspection, shared by the flycheck setup below and by the
+;; Ruby commands at the bottom of this file. Top level on purpose: the
+;; commands must not depend on flycheck having been loaded first.
+
+(defun my/ruby-project-root ()
+  "Directory of the Ruby project owning the current buffer.
+
+NOT `vc-root-dir'. That goes through `vc-deduce-backend', whose last
+resort is `(vc-mode (vc-backend buffer-file-name))', and `vc-mode' is
+populated by `vc-refresh-state' from `find-file-hook' -- which runs
+*after* every major-mode hook. Called from `ruby-ts-mode-hook' it
+therefore returns nil, and the old `(or (vc-root-dir) default-directory)'
+silently degraded to the buffer's own directory: for
+<proj>/app/models/user.rb the \"root\" was <proj>/app/models/, so no
+Gemfile was ever found and `bundle exec' was dropped from the argv.
+`locate-dominating-file' needs no such state."
+  (let ((start (or (and buffer-file-name
+                        (file-name-directory buffer-file-name))
+                   default-directory)))
+    (expand-file-name
+     (or (locate-dominating-file start "Gemfile")
+         (locate-dominating-file start "Gemfile.lock")
+         (locate-dominating-file start ".git")
+         default-directory))))
+
+(defun my/ruby--file-matches-p (file regexp)
+  "Non-nil when FILE is a readable regular file matching REGEXP.
+
+Never signals. `file-readable-p' alone is also true of a *directory*
+named Gemfile.lock, and `insert-file-contents' then raises `file-error';
+these predicates run from `ruby-ts-mode-hook', where a signal aborts the
+remainder of the hook -- `eglot-ensure' included."
+  (and (file-regular-p file)
+       (file-readable-p file)
+       (ignore-errors
+         (with-temp-buffer
+           (insert-file-contents file)
+           (goto-char (point-min))
+           (and (re-search-forward regexp nil t) t)))))
+
+(defun my/ruby-gem-in-project-p (root gem)
+  "Non-nil when GEM belongs to the Ruby project at ROOT.
+Decided by reading Gemfile.lock and Gemfile.  The obvious alternative,
+shelling out to `bundle list GEM', is a synchronous subprocess on a mode
+hook -- it blocks the first keystroke in every Ruby buffer and pops up
+*Shell Command Output*."
+  (let ((case-fold-search nil)
+        (name (regexp-quote gem)))
+    (or (my/ruby--file-matches-p
+         (expand-file-name "Gemfile.lock" root)
+         ;; Gemfile.lock spells a gem two ways: "    standard (1.54.0)" under
+         ;; GEM/specs and a bare "  standard" under DEPENDENCIES. The space
+         ;; has to sit INSIDE the group -- with it outside, as in the old
+         ;; "^ +standard \\((\\|$\\)", the `$' branch demanded a trailing
+         ;; space before end-of-line and could never match anything.
+         (concat "^ +" name "\\( (\\|$\\)"))
+        (my/ruby--file-matches-p
+         (expand-file-name "Gemfile" root)
+         (concat "^ *gem +['\"]" name "['\"]")))))
 
 ;; flycheck : https://github.com/flycheck/flycheck
 (use-package flycheck
@@ -324,24 +395,14 @@ ruby-lsp picks StandardRB or RuboCop from the project's Gemfile itself."
   :config
   (defun my/ruby-uses-standard-p (root)
     "Non-nil when the Ruby project at ROOT lints with StandardRB.
-Decided by reading Gemfile.lock and Gemfile.  The obvious alternative,
-shelling out to `bundle list standard', is a synchronous subprocess on a
-mode hook -- it blocks the first keystroke in every Ruby buffer and pops
-up *Shell Command Output*."
-    (let ((lock (expand-file-name "Gemfile.lock" root))
-          (gemfile (expand-file-name "Gemfile" root)))
-      (cond
-       ((file-readable-p lock)
-        (with-temp-buffer
-          (insert-file-contents lock)
-          (goto-char (point-min))
-          (and (re-search-forward "^ +standard \\((\\|$\\)" nil t) t)))
-       ((file-readable-p gemfile)
-        (with-temp-buffer
-          (insert-file-contents gemfile)
-          (goto-char (point-min))
-          (and (re-search-forward "^ *gem +['\"]standard['\"]" nil t) t)))
-       (t (and (executable-find "standardrb") t)))))
+With neither a Gemfile.lock nor a Gemfile to read, falls back to whatever
+`standardrb' happens to be on `exec-path'."
+    (cond
+     ((my/ruby-gem-in-project-p root "standard") t)
+     ((or (file-regular-p (expand-file-name "Gemfile.lock" root))
+          (file-regular-p (expand-file-name "Gemfile" root)))
+      nil)
+     (t (and (executable-find "standardrb") t))))
 
   (defun my/setup-ruby-flycheck ()
     "Run this project's Ruby linter through mise, and Bundler when present.
@@ -349,13 +410,29 @@ Flycheck has no per-checker argument list -- there is no
 `flycheck-...-executable-args' -- so prefixing a checker's command is done
 with `flycheck-command-wrapper-function', which receives the whole argv."
     (when (derived-mode-p 'ruby-ts-mode 'ruby-mode)
-      (let* ((root (or (vc-root-dir) default-directory))
+      (let* ((root (my/ruby-project-root))
              (bundled (file-exists-p (expand-file-name "Gemfile" root))))
         (setq-local flycheck-command-wrapper-function
                     (lambda (command)
                       (append '("mise" "x" "--")
                               (and bundled '("bundle" "exec"))
                               command)))
+        ;; The wrapper alone is not enough. `flycheck-define-command-checker'
+        ;; injects `:enabled (lambda () (and (flycheck-find-checker-executable
+        ;; symbol) ...))', which resolves the BARE name over `exec-path' and
+        ;; never sees the wrapper. When the linter lives only in the bundle
+        ;; that predicate returns nil, the negative is cached per buffer in
+        ;; `flycheck--automatically-disabled-checkers', and because
+        ;; `flycheck-checkers' is pinned to this one checker while
+        ;; `eglot-stay-out-of' has already dropped Flymake, the buffer shows
+        ;; zero diagnostics and no error -- only C-c ! v tells you why. When
+        ;; it IS found globally it is worse: the argv carries the absolute
+        ;; *global* binstub under `bundle exec', which Bundler rejects
+        ;; whenever that gem's version differs from Gemfile.lock.
+        ;; `identity' hands the bare name straight through, so the argv reads
+        ;; "mise x -- bundle exec standardrb ..." and resolution happens
+        ;; inside the bundle, where it belongs.
+        (setq-local flycheck-executable-find #'identity)
         (setq-local flycheck-checkers
                     (if (my/ruby-uses-standard-p root)
                         '(ruby-standard)
@@ -573,7 +650,7 @@ with `flycheck-command-wrapper-function', which receives the whole argv."
 (defun my/ruby-run-tests ()
   "Run the project's Ruby test suite through mise."
   (interactive)
-  (let ((default-directory (or (vc-root-dir) default-directory)))
+  (let ((default-directory (my/ruby-project-root)))
     (compile (if (file-exists-p "Gemfile")
                  "mise x -- bundle exec rspec"
                "mise x -- ruby -I test test/"))))
@@ -581,7 +658,7 @@ with `flycheck-command-wrapper-function', which receives the whole argv."
 (defun my/rails-console ()
   "Open a Rails console for this project in a vterm."
   (interactive)
-  (let ((default-directory (or (vc-root-dir) default-directory)))
+  (let ((default-directory (my/ruby-project-root)))
     (if (file-exists-p "bin/rails")
         (vterm-other-window "mise x -- bundle exec rails console")
       (user-error "Not in a Rails project"))))
