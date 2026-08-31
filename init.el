@@ -192,8 +192,11 @@
 (use-package avy
   :straight (avy :type git :host github :repo "abo-abo/avy"))
 
-;; csv-mode : GNU ELPA -- not built in, despite the old comment claiming so
+;; csv-mode : GNU ELPA -- not built in, despite the old comment claiming so.
+;; Pinned to the GNU ELPA git mirror so straight never has to clone its
+;; recipe repositories just to look this one up.
 (use-package csv-mode
+  :straight (csv-mode :type git :host github :repo "emacs-straight/csv-mode")
   :mode "\\.csv\\'")
 
 ;; ivy : https://github.com/abo-abo/swiper
@@ -421,9 +424,8 @@ with `flycheck-command-wrapper-function', which receives the whole argv."
   (add-to-list 'auto-mode-alist '("Rakefile\\'" . ruby-ts-mode))
   (add-to-list 'auto-mode-alist '("Gemfile\\'" . ruby-ts-mode))
   (add-to-list 'auto-mode-alist '("\\.gemspec\\'" . ruby-ts-mode))
-  (add-to-list 'auto-mode-alist '("\\.md\\'" . markdown-ts-mode))
-  (add-to-list 'auto-mode-alist '("\\.markdown\\'" . markdown-ts-mode))
-  (add-to-list 'auto-mode-alist '("README\\.md\\'" . markdown-ts-mode))
+  ;; .md is owned by the `markdown-ts-mode' declaration below, which also
+  ;; has to supply the autoload the built-in library lacks.
   (add-to-list 'auto-mode-alist '("\\.html\\'" . html-ts-mode))
   (add-to-list 'auto-mode-alist '("\\.htm\\'" . html-ts-mode))
   (add-to-list 'auto-mode-alist '("\\.erb\\'" . ruby-ts-mode))
@@ -438,6 +440,21 @@ with `flycheck-command-wrapper-function', which receives the whole argv."
 
   ;; Tree-sitter will be enabled automatically for supported modes
   )
+
+;; markdown-ts-mode : [built-in since Emacs 31]
+;; The library ships in Resources/lisp/textmodes/, but upstream deliberately
+;; withholds the autoload cookie -- it calls the mode experimental and does
+;; not enable it by default -- so loaddefs.el only carries
+;; `register-definition-prefixes' for it and `markdown-ts-mode' is void until
+;; something requires the file. With a bare auto-mode-alist entry every .md
+;; buffer therefore died on "Ignoring unknown mode 'markdown-ts-mode'" and
+;; fell back to fundamental-mode. `:mode' makes use-package emit the missing
+;; autoload alongside the auto-mode-alist entries.
+(use-package markdown-ts-mode
+  :ensure nil
+  :straight nil
+  :mode (("\\.md\\'" . markdown-ts-mode)
+         ("\\.markdown\\'" . markdown-ts-mode)))
 
 ;; docker.el : https://github.com/Silex/docker.el
 (use-package docker
