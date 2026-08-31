@@ -265,77 +265,40 @@
   :straight (company-box :type git :host github :repo "sebastiencs/company-box")
   :hook (company-mode . company-box-mode))
 
-;; robe : https://github.com/dgutov/robe
-(use-package robe
-  :ensure t
-  :straight (robe :type git :host github :repo "dgutov/robe")
-  :after company
-  :hook ((robe-mode . my/setup-robe-company))
+;; eglot : [built-in] -- ruby-lsp is the only Ruby language server, matching
+;; the Zed config's  "language_servers": ["ruby-lsp", "!solargraph", ...]
+(use-package eglot
+  :ensure nil
+  :straight nil
+  ;; `eglot-code-actions' is NOT autoloaded by Emacs 31 core (only `eglot'
+  ;; and `eglot-ensure' are), and lisp/my-hyper.el binds it to Hyper-c a.
+  ;; Without this the key is void until something else loads eglot.
+  :commands (eglot-code-actions)
+  :hook ((ruby-ts-mode . eglot-ensure)
+         (ruby-mode . eglot-ensure)
+         (eglot-managed-mode . my/eglot-format-on-save))
   :config
-  ;; Set up company-robe backend for Ruby modes specifically
-  (defun my/setup-robe-company ()
-    "Set up company-robe backend for the current buffer."
-    (when (and (bound-and-true-p company-mode)
-               (derived-mode-p 'ruby-ts-mode 'ruby-mode))
-      (set (make-local-variable 'company-backends)
-           (append '(company-robe) company-backends))))
+  (defconst my/ruby-lsp-shim
+    (expand-file-name "bin/mise-ruby-lsp" my-emacs-dir)
+    "Wrapper that runs ruby-lsp under mise with the JFrog Bundler token set.")
 
-  (require 'inf-ruby)
+  ;; Eglot ships a solargraph entry for Ruby; add-to-list puts ours first.
+  (add-to-list 'eglot-server-programs
+               `((ruby-ts-mode ruby-mode) . (,my/ruby-lsp-shim)))
 
-  ;; Path to our robe-specific Gemfile
-  (defvar my/robe-gemfile (expand-file-name "Gemfile.robe" user-emacs-directory)
-    "Path to the robe-specific Gemfile for bundler-compose.")
+  ;; Flycheck owns diagnostics in this configuration (see the flycheck
+  ;; block), and ruby-lsp's own linting would run standardrb a second time
+  ;; over the same buffer. Keep Eglot's completion, eldoc and xref; drop
+  ;; only its Flymake backend. Remove `flymake' from this list to get
+  ;; ruby-lsp diagnostics back instead.
+  (setq eglot-stay-out-of '(flymake))
 
-  (defun my/project-root ()
-    "Return project root for current buffer."
-    (or (vc-root-dir)
-        (when (fboundp 'project-current)
-          (when-let ((p (project-current nil)))
-            (car (project-roots p))))
-        default-directory))
-
-  (defun my/bundler-compose-available-p ()
-    "Check if bundler-compose (bundle compose) is available in this project."
-    (let ((default-directory (my/project-root)))
-      (and (executable-find "bundle")
-           (zerop (call-process "bundle" nil nil nil "help" "compose")))))
-
-  (defun my/bundler-usable-p ()
-    "Check if Bundler is usable in this project."
-    (let ((default-directory (my/project-root)))
-      (and (executable-find "bundle")
-           (file-exists-p "Gemfile")
-           (zerop (call-process "bundle" nil nil nil "check")))))
-
-  (defun my/robe-start-with-compose ()
-    "Start robe using bundler-compose if available; otherwise, start with a sane default."
-    (interactive)
-    (let ((default-directory (my/project-root)))
-      (condition-case err
-          (if (and (file-exists-p my/robe-gemfile)
-                   (my/bundler-compose-available-p))
-              (let ((cmd (mapconcat #'identity
-                                     (list "bundle" "compose" "Gemfile" my/robe-gemfile "--exec" "irb")
-                                     " "))
-                     (original-implementations inf-ruby-implementations))
-                (setq inf-ruby-implementations
-                      (cons (cons "bundler-compose" cmd) inf-ruby-implementations))
-                (let ((inf-ruby-default-implementation "bundler-compose"))
-                  (robe-start))
-                (setq inf-ruby-implementations original-implementations))
-            (let ((inf-ruby-default-implementation
-                   (if (my/bundler-usable-p) "bundler" "ruby")))
-              (robe-start)))
-        (error
-         (message "Robe start error: %s" (error-message-string err))))))
-
-  ;; No auto-start; use keybinding to start Robe per project
-
-  :bind (:map robe-mode-map
-              ("C-c r j" . robe-jump)
-              ("C-c r d" . robe-doc)
-              ("C-c r s" . my/robe-start-with-compose)
-              ("C-c r r" . robe-rails-refresh)))
+  (defun my/eglot-format-on-save ()
+    "Format Ruby buffers with the language server on save.
+Mirrors \"format_on_save\": \"on\" for Ruby in ~/.config/zed/settings.json.
+ruby-lsp picks StandardRB or RuboCop from the project's Gemfile itself."
+    (when (derived-mode-p 'ruby-ts-mode 'ruby-mode)
+      (add-hook 'before-save-hook #'eglot-format-buffer nil t))))
 
 ;; flycheck : https://github.com/flycheck/flycheck
 (use-package flycheck
@@ -374,27 +337,6 @@
          ("C-c ! p" . flycheck-previous-error)
          ("C-c ! c" . flycheck-buffer)
          ("C-c ! v" . flycheck-verify-setup)))
-
-;; Ruby formatting with standardrb
-(use-package ruby-mode
-  :ensure nil
-  :straight nil
-  :config
-  (defun my/ruby-format-buffer ()
-    "Manually format current Ruby buffer with standardrb."
-    (interactive)
-    (when (and (derived-mode-p 'ruby-ts-mode 'ruby-mode)
-               (buffer-file-name)
-               (or (executable-find "standardrb")
-                   (and (file-exists-p "Gemfile")
-                        (zerop (shell-command "bundle list standard >/dev/null 2>&1")))))
-      (let ((command (if (and (file-exists-p "Gemfile")
-                              (zerop (shell-command "bundle list standard >/dev/null 2>&1")))
-                         "bundle exec standardrb --fix"
-                       "standardrb --fix")))
-        (shell-command (format "%s %s" command (shell-quote-argument (buffer-file-name))))
-        ;; Revert buffer to show formatted changes
-        (revert-buffer :ignore-auto :noconfirm)))))
 
 ;; Tree-sitter configuration
 (use-package treesit
@@ -578,6 +520,30 @@
          ("C-c a f" . aidermacs-add-file)           ; add file (pick)
          ("C-c a b" . aidermacs-add-current-file)   ; add current buffer's file
          ("C-c a k" . aidermacs-exit)))             ; quit session
+
+;; Ruby project commands, bound under the Hyper "c" prefix.
+(defun my/ruby-format-buffer ()
+  "Format the current buffer with its language server."
+  (interactive)
+  (if (bound-and-true-p eglot--managed-mode)
+      (eglot-format-buffer)
+    (user-error "No language server for this buffer")))
+
+(defun my/ruby-run-tests ()
+  "Run the project's Ruby test suite through mise."
+  (interactive)
+  (let ((default-directory (or (vc-root-dir) default-directory)))
+    (compile (if (file-exists-p "Gemfile")
+                 "mise x -- bundle exec rspec"
+               "mise x -- ruby -I test test/"))))
+
+(defun my/rails-console ()
+  "Open a Rails console for this project in a vterm."
+  (interactive)
+  (let ((default-directory (or (vc-root-dir) default-directory)))
+    (if (file-exists-p "bin/rails")
+        (vterm-other-window "mise x -- bundle exec rails console")
+      (user-error "Not in a Rails project"))))
 
 ;; My own custom configuration
 (use-package emacs

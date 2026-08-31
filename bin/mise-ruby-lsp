@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# ruby-lsp launcher for Emacs (eglot).
+#
+# Two things Emacs cannot do for itself:
+#
+#   1. ruby-lsp has to run under the project's mise Ruby, with the matching
+#      GEM_HOME/GEM_PATH. This is the launch strategy ruby-lsp documents for
+#      version managers -- https://shopify.github.io/ruby-lsp/editors.html
+#      lists `mise x -- ruby-lsp` first.
+#
+#   2. Bundler needs the Artifactory credential to resolve nedap.jfrog.io
+#      gems, and it lives in 1Password. A GUI-launched Emacs has no shell
+#      environment, so ~/.config/zsh never runs and the `tokens` function
+#      never fires.
+#
+# Mirrors ~/.local/bin/zed-ruby-lsp. Point Zed's lsp.ruby-lsp.binary.path at
+# this file to keep a single shim under version control.
+
+set -eu
+
+OP=/opt/homebrew/bin/op
+MISE=/opt/homebrew/bin/mise
+OP_ACCOUNT=your-account.1password.com
+OP_REF='op://your-vault-uuid/jfrog/token'
+
+if token=$("$OP" read --account "$OP_ACCOUNT" "$OP_REF" 2>&1); then
+  export BUNDLE_NEDAP__JFROG__IO="$token"
+else
+  # Not fatal: ruby-lsp is still useful in projects with no Artifactory
+  # gems, and failing here would take the whole LSP session down. Eglot
+  # collects this in the *EGLOT (<project>/ruby-ts-mode) stderr* buffer.
+  echo "mise-ruby-lsp: could not read the JFrog token from 1Password: $token" >&2
+  echo "mise-ruby-lsp: unlock the 1Password app and enable CLI integration" >&2
+fi
+
+exec "$MISE" exec -- ruby-lsp "$@"
