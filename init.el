@@ -41,42 +41,28 @@
 ;; Control verbosity of use-package; set to 't' for detailed startup info
 (setq use-package-verbose nil)
 
-;; Add Brew to my Emacs PATH
-(setenv "PATH" (concat (getenv "PATH") ":/opt/homebrew/bin"))
-(add-to-list 'exec-path "/opt/homebrew/bin")
-
-;; Add Docker to Emacs PATH
-(setenv "PATH" (concat (getenv "PATH") ":/Users/your-username/.docker/bin"))
-(add-to-list 'exec-path "/Users/your-username/.docker/bin")
-
-;; Add user local bin to Emacs PATH (for pipx/uv-installed tools like aider)
-(setenv "PATH" (concat (getenv "PATH") ":/Users/your-username/.local/bin"))
-(add-to-list 'exec-path "/Users/your-username/.local/bin")
+;; Emacs 31 derives the default `exec-path' from the same PATH other
+;; programs get. A GUI launch from the Dock or Spotlight never runs zsh, so
+;; anything ~/.config/zsh adds is missing; add it back explicitly.
+;; mise's own per-project paths are handled by mise.el, below.
+(dolist (dir '("/opt/homebrew/bin"
+               "~/.docker/bin"
+               "~/.local/bin"))
+  (let ((path (expand-file-name dir)))
+    (when (file-directory-p path)
+      (add-to-list 'exec-path path)
+      (setenv "PATH" (concat (getenv "PATH") ":" path)))))
 
 ;; mise - https://github.com/liuyinz/mise.el
+;; `global-mise-mode' hooks find-file and friends itself, setting
+;; `process-environment' and `exec-path' per buffer from `mise env'. That
+;; covers every language, so there is nothing Ruby-specific to do here.
 (use-package mise
   :straight (mise :type git :host github :repo "liuyinz/mise.el")
-  :hook ((after-init . global-mise-mode)
-         (find-file . my/mise-activate-for-ruby-project)
-         (ruby-ts-mode . my/mise-activate-for-ruby-project)
-         (ruby-mode . my/mise-activate-for-ruby-project))
+  :hook (after-init . global-mise-mode)
   :config
-  ;; Automatically activate mise in project directories
-  (setq mise-auto-activate t)
-  ;; Enable more aggressive mise environment updates
-  (setq mise-cache-env t)
-
-  ;; Force mise activation for Ruby files using git project root
-  (defun my/mise-activate-for-ruby-project ()
-    "Activate mise for the current Ruby file's git project root."
-    (when (and buffer-file-name
-               (derived-mode-p 'ruby-ts-mode 'ruby-mode))
-      (when-let* ((project-root (or (vc-root-dir)
-                                    (and (fboundp 'project-root)
-                                         (project-root (project-current))))))
-        ;; Set default-directory to project root and activate mise
-        (let ((default-directory project-root))
-          (mise-mode 1))))))
+  ;; Keep eshell's environment in step when its directory changes.
+  (setq mise-update-on-eshell-directory-change t))
 
 ;; Start the emacs server when it isn't running
 (use-package server
@@ -160,7 +146,7 @@
 ;; aggressive-indent-mode : https://github.com/Malabarba/aggressive-indent-mode
 (use-package aggressive-indent
   :ensure t
-  :straight (aggressive-indent :type git :host github :repo "Malabarba/aggressive-indent-mode", :files ("dist" "*.el")))
+  :straight (aggressive-indent :type git :host github :repo "Malabarba/aggressive-indent-mode"))
 
 ;; ibuffer : [build-in]
 (use-package ibuffer
@@ -201,6 +187,14 @@
   :bind
   (("M-<up>" . move-text-up)
    ("M-<down>" . move-text-down)))
+
+;; avy : https://github.com/abo-abo/avy  -- bound to Hyper-j
+(use-package avy
+  :straight (avy :type git :host github :repo "abo-abo/avy"))
+
+;; csv-mode : GNU ELPA -- not built in, despite the old comment claiming so
+(use-package csv-mode
+  :mode "\\.csv\\'")
 
 ;; ivy : https://github.com/abo-abo/swiper
 (use-package ivy
@@ -247,10 +241,10 @@
   :ensure t
   :straight (emojify :type git :host github :repo "iqbalansari/emacs-emojify"))
 
-;; which-key : https://github.com/justbur/emacs-which-key
+;; which-key : [built-in since Emacs 30 -- justbur/emacs-which-key moved into core]
 (use-package which-key
-  :diminish which-key-mode
-  :straight (which-key :type git :host github :repo "justbur/emacs-which-key")
+  :ensure nil
+  :straight nil
   :config
   (which-key-mode))
 
@@ -452,7 +446,6 @@
           (javascript-mode . js-ts-mode)
           (js-mode . js-ts-mode)
           (json-mode . json-ts-mode)
-          (kotlin-mode . kotlin-ts-mode)
           (markdown-mode . markdown-ts-mode)
           (python-mode . python-ts-mode)
           (ruby-mode . ruby-ts-mode)
@@ -483,11 +476,8 @@
   (add-to-list 'auto-mode-alist '("\\.yml\\'" . yaml-ts-mode))
   (add-to-list 'auto-mode-alist '("\\.yaml\\'" . yaml-ts-mode))
   (add-to-list 'auto-mode-alist '("\\.java\\'" . java-ts-mode))
-  (add-to-list 'auto-mode-alist '("\\.kt\\'" . kotlin-ts-mode))
-  (add-to-list 'auto-mode-alist '("\\.kts\\'" . kotlin-ts-mode))
   (add-to-list 'auto-mode-alist '("Dockerfile\\'" . dockerfile-ts-mode))
   (add-to-list 'auto-mode-alist '("\\.dockerfile\\'" . dockerfile-ts-mode))
-  (add-to-list 'auto-mode-alist '("\\.csv\\'" . csv-mode)) ; Use built-in CSV mode
 
   ;; Tree-sitter will be enabled automatically for supported modes
   )
@@ -506,10 +496,10 @@
 	 ("<C-S-tab>" . 'iflipb-previous-buffer)
 	 ("M-o" . 'other-window)))
 
-;; editorconfig : https://github.com/editorconfig/editorconfig-emacs
+;; editorconfig : [built-in since Emacs 30]
 (use-package editorconfig
-  :ensure t
-  :straight (editorconfig :type git :host github :repo "editorconfig/editorconfig-emacs")
+  :ensure nil
+  :straight nil
   :config
   (editorconfig-mode 1))
 
