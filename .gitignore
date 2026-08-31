@@ -59,6 +59,9 @@ dist/
 # Flycheck
 flycheck_*.el
 
+# config test harness
+/test/check-config.log
+
 # server auth directory
 /server/
 
