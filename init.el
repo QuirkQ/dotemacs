@@ -9,6 +9,9 @@
 (defconst my-emacs-dir (expand-file-name user-emacs-directory)
   "The path to the emacs.d directory.")
 
+;; Configuration split out of this file lives in lisp/.
+(add-to-list 'load-path (expand-file-name "lisp" my-emacs-dir))
+
 ;; Initialise straight.el : https://github.com/radian-software/straight.el
 (defvar bootstrap-version)
 (let ((bootstrap-file
@@ -222,8 +225,6 @@
   :bind (("M-x" . counsel-M-x)
          ("C-c f" . counsel-find-file)
          ("C-c k" . counsel-ag)
-	 ("<f19> d" . counsel-git)
-	 ("<f19> f" . counsel-git-grep)
          ("<f1> f" . counsel-describe-function)
          ("<f1> v" . counsel-describe-variable)
          ("<f1> l" . counsel-find-library)
@@ -636,87 +637,10 @@
   ;; Start in full screen
   ; (add-to-list 'default-frame-alist '(fullscreen . fullscreen))
 
-  (keymap-global-set "M-/" 'comment-or-uncomment-region)
+  (keymap-global-set "M-/" 'comment-or-uncomment-region))
 
-  ;; === F19 DEVELOPER SHORTCUTS ===
-  ;; Your caps-lock → F19 super shortcuts for maximum productivity!
-
-  ;; === PROJECT & FILE NAVIGATION ===
-  (keymap-global-set "<f19> p" 'project-find-file)          ; Find file in project
-  (keymap-global-set "<f19> t" 'treemacs)                   ; Toggle file tree
-  (keymap-global-set "<f19> b" 'ivy-switch-buffer)          ; Switch buffer
-  (keymap-global-set "<f19> k" 'kill-this-buffer)           ; Kill current buffer
-  (keymap-global-set "<f19> w" 'save-buffer)                ; Save file
-  (keymap-global-set "<f19> <left>" 'previous-buffer)       ; Previous buffer (existing)
-  (keymap-global-set "<f19> <right>" 'next-buffer)          ; Next buffer (existing)
-  (keymap-global-set "<f19> d" 'counsel-git)                ; Git files (existing)
-  (keymap-global-set "<f19> f" 'counsel-git-grep)           ; Git grep (existing)
-
-  ;; === GIT OPERATIONS ===
-  (keymap-global-set "<f19> g s" 'magit-status)             ; Git status
-  (keymap-global-set "<f19> g c" 'magit-commit)             ; Git commit
-  (keymap-global-set "<f19> g p" 'magit-push)               ; Git push
-  (keymap-global-set "<f19> g l" 'magit-log-all)            ; Git log
-  (keymap-global-set "<f19> g b" 'magit-blame)              ; Git blame
-  (keymap-global-set "<f19> g f" 'magit-pull)               ; Git fetch/pull
-
-  ;; === AI/GPT ASSISTANCE ===
-  (keymap-global-set "<f19> a g" 'aidermacs-run)               ; start Aider
-  (keymap-global-set "<f19> a s" 'aidermacs-question-code)     ; ask about region
-  (keymap-global-set "<f19> a f" 'aidermacs-add-file)          ; add file
-  (keymap-global-set "<f19> a b" 'aidermacs-add-current-file)  ; add current buffer's file
-  (keymap-global-set "<f19> a r" 'aidermacs-drop-current-file) ; remove current file
-  (keymap-global-set "<f19> a R" 'aidermacs-drop-all-files)    ; remove all files
-  (keymap-global-set "<f19> a k" 'aidermacs-exit)              ; quit
-
-  ;; === DEVELOPMENT TOOLS ===
-  (keymap-global-set "<f19> c c" 'compile)                  ; Compile project
-  (keymap-global-set "<f19> c r" (lambda () (interactive)   ; Run Ruby/Rails tests
-                                    (if (file-exists-p "Gemfile")
-                                        (compile "bundle exec rspec")
-                                      (compile "ruby -I test test/"))))
-  (keymap-global-set "<f19> c d" 'docker)                   ; Docker management
-  (keymap-global-set "<f19> c f" 'my/ruby-format-buffer)    ; Format with StandardRB
-  (keymap-global-set "<f19> c l" 'flycheck-list-errors)     ; List linting errors
-  (keymap-global-set "<f19> c t" 'vterm)                    ; Terminal
-
-  ;; === WINDOW & BUFFER MANAGEMENT ===
-  (keymap-global-set "<f19> o" 'other-window)               ; Switch to other window
-  (keymap-global-set "<f19> 1" 'delete-other-windows)       ; Single window
-  (keymap-global-set "<f19> 2" 'split-window-below)         ; Split horizontal
-  (keymap-global-set "<f19> 3" 'split-window-right)         ; Split vertical
-  (keymap-global-set "<f19> 0" 'delete-window)              ; Delete current window
-  (keymap-global-set "<f19> =" 'balance-windows)            ; Balance window sizes
-
-  ;; === MACROS & AUTOMATION ===
-  (keymap-global-set "<f19> r" 'kmacro-start-macro)         ; Record macro (existing)
-  (keymap-global-set "<f19> e" 'kmacro-end-macro)           ; End macro (existing)
-  (keymap-global-set "<f19> SPC" 'kmacro-end-or-call-macro) ; Call macro (existing)
-  (keymap-global-set "<f19> m" 'kmacro-name-last-macro)     ; Name last macro
-
-  ;; === QUICK ACTIONS ===
-  (keymap-global-set "<f19> ;" 'comment-or-uncomment-region) ; Comment/uncomment
-  (keymap-global-set "<f19> u" 'undo)                       ; Undo
-  (keymap-global-set "<f19> /" 'swiper)                     ; Search in buffer
-  (keymap-global-set "<f19> ?" 'which-key-show-top-level)   ; Show all shortcuts
-  (keymap-global-set "<f19> i" 'imenu)                      ; Jump to definition
-  (keymap-global-set "<f19> j" 'avy-goto-char)              ; Jump to character
-  (keymap-global-set "<f19> l" 'goto-line)                  ; Go to line
-  (keymap-global-set "<f19> x" 'execute-extended-command)   ; M-x alternative
-  (keymap-global-set "<f19> q" 'keyboard-quit)              ; Quit/cancel
-
-  ;; === RUBY/RAILS SPECIFIC ===
-  (keymap-global-set "<f19> R r" 'robe-jump)                ; Jump to Ruby definition
-  (keymap-global-set "<f19> R d" 'robe-doc)                 ; Ruby documentation
-  (keymap-global-set "<f19> R s" 'my/robe-start-with-compose) ; Start Robe
-  (keymap-global-set "<f19> R c" (lambda () (interactive)   ; Rails console
-                                    (if (file-exists-p "bin/rails")
-                                        (vterm-other-window "bundle exec rails console")
-                                      (message "Not in a Rails project"))))
-
-  ;; === SPECIAL FUNCTIONS ===
-  (keymap-global-set "<f19> ESC" 'keyboard-escape-quit)     ; Ultimate escape
-  (keymap-global-set "<f19> <f19>" 'execute-extended-command)) ; Double-tap for M-x
+;; The Caps-Lock Hyper key layer -- see lisp/my-hyper.el.
+(require 'my-hyper)
 
 (provide 'init)
 ;;; init.el ends here
