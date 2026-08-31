@@ -12,6 +12,29 @@
 ;; Configuration split out of this file lives in lisp/.
 (add-to-list 'load-path (expand-file-name "lisp" my-emacs-dir))
 
+;; Nerd Fonts ship two different family strings and Core Text is inconsistent
+;; about which one it reports: the JetBrainsMono Mono patch has family name
+;; (name ID 1) "JetBrainsMono NFM" but typographic family (name ID 16)
+;; "JetBrainsMono Nerd Font Mono". Hardcoding either one risks a silent
+;; fallback to Menlo, so try both and let the first that resolves win.
+(defconst my-mono-font-candidates
+  '("JetBrainsMono Nerd Font Mono" "JetBrainsMono NFM" "Menlo")
+  "Monospace families to try, most preferred first.")
+
+(defun my/first-available-font (candidates)
+  "Return the first family in CANDIDATES that is installed.
+`find-font' needs a display, so this returns nil under -batch and in a
+daemon with no frame yet; callers must cope with that."
+  (and (display-graphic-p)
+       (seq-find (lambda (family)
+                   (find-font (font-spec :family family)))
+                 candidates)))
+
+(defun my/mono-font ()
+  "The monospace family to use, falling back to the preferred name."
+  (or (my/first-available-font my-mono-font-candidates)
+      (car my-mono-font-candidates)))
+
 ;; Treat these as built-in so straight.el never installs the GNU ELPA copies.
 ;; multi-vterm declares (project "0.3.0") as a dependency, which made straight
 ;; clone ELPA `project' and `xref' on top of Emacs 31's own. They then load
@@ -83,7 +106,14 @@
 
 ;; nerd-icons : https://github.com/rainstormstudio/nerd-icons.el
 (use-package nerd-icons
-  :straight (nerd-icons :type git :host github :repo "rainstormstudio/nerd-icons.el"))
+  :straight (nerd-icons :type git :host github :repo "rainstormstudio/nerd-icons.el")
+  :config
+  ;; Upstream defaults to "Symbols Nerd Font Mono", which is not installed
+  ;; here. Every icon then renders as a hex box (U+F06EB and friends) in
+  ;; treemacs, the modeline and the dashboard. The JetBrainsMono Nerd Font
+  ;; patch carries the same Private Use Area glyphs -- verified: all of
+  ;; F06EB F178A F19CA F0225 F0626 F015A F002A F02FD are in its cmap.
+  (setq nerd-icons-font-family (my/mono-font)))
 
 ;; shrink-path : https://github.com/zbelial/shrink-path.el
 (use-package shrink-path
@@ -251,9 +281,18 @@
   :bind ("C-x g" . magit-status))
 
 ;; emacs-emojify : https://github.com/iqbalansari/emacs-emojify
+;; Only for shortcode/ascii substitution (":wink:" -> the codepoint). The
+;; rendering itself is native: see the `emoji' fontset rule below.
 (use-package emojify
   :ensure t
-  :straight (emojify :type git :host github :repo "iqbalansari/emacs-emojify"))
+  :straight (emojify :type git :host github :repo "iqbalansari/emacs-emojify")
+  :hook (after-init . global-emojify-mode)
+  :config
+  ;; Upstream default is `image', which needs an asset set downloaded into
+  ;; `emojify-emojis-dir' (~/.emacs.d/emojis). That directory does not exist,
+  ;; so nothing rendered. `unicode' substitutes the real codepoint and lets
+  ;; Emacs draw it with Apple Color Emoji -- no downloads, no network.
+  (setq emojify-display-style 'unicode))
 
 ;; which-key : [built-in since Emacs 30 -- justbur/emacs-which-key moved into core]
 (use-package which-key
@@ -594,10 +633,10 @@ with `flycheck-command-wrapper-function', which receives the whole argv."
   (defun my/vterm-setup ()
     "Drop line numbers and use a Nerd Font so shell icons render."
     (display-line-numbers-mode 0)
+    ;; Mono variant deliberately: the proportional patch drifts columns in a
+    ;; terminal. Same family as the default face, so widths agree.
     (setq-local buffer-face-mode-face
-                (if (find-font (font-spec :family "JetBrainsMono Nerd Font"))
-                    '(:family "JetBrainsMono Nerd Font" :height 120)
-                  '(:family "Menlo" :height 120)))
+                (list :family (my/mono-font) :height 120))
     (buffer-face-mode t))
 
   :bind (("C-c t" . vterm)))
@@ -713,13 +752,22 @@ console. The command has to arrive through `vterm-shell'."
   (setq inhibit-startup-message t)
 
   ;; Set font to Menlo (clean macOS programming font)
-  (set-face-attribute 'default nil
-                      :family "Menlo"
-                      :height 120
-                      :weight 'normal)
-  (set-face-attribute 'fixed-pitch nil
-                      :family "Menlo"
-                      :height 120)
+  ;; The Nerd Font patch means Private Use Area icon glyphs render inline in
+  ;; any buffer, not only where nerd-icons sets its own face.
+  (let ((family (my/mono-font)))
+    (set-face-attribute 'default nil
+                        :family family
+                        :height 120
+                        :weight 'normal)
+    (set-face-attribute 'fixed-pitch nil
+                        :family family
+                        :height 120))
+
+  ;; Emacs 31 knows the `emoji' script; macOS ships the colour font. This is
+  ;; what actually draws emoji -- emojify only rewrites shortcodes.
+  (when (find-font (font-spec :family "Apple Color Emoji"))
+    (set-fontset-font t 'emoji (font-spec :family "Apple Color Emoji")
+                      nil 'prepend))
 
   (scroll-bar-mode -1)        ; Disable visible scrollbar
   (tool-bar-mode -1)          ; Disable the toolbar
