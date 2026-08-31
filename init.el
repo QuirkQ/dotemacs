@@ -461,29 +461,35 @@ with `flycheck-command-wrapper-function', which receives the whole argv."
   (editorconfig-mode 1))
 
 ;; vterm : https://github.com/akermu/emacs-libvterm
+;; Needs cmake and a C toolchain; the module builds on first load.
+;; Interactive zsh runs `mise activate zsh' (~/.config/zsh/conf.d/60-tools.zsh),
+;; so a vterm shell already has the project's runtimes -- unlike Emacs'
+;; own subprocesses, which is why compile and flycheck prefix `mise x --'.
 (use-package vterm
   :ensure t
   :straight (vterm :type git :host github :repo "akermu/emacs-libvterm")
-  :hook ((vterm-mode . (lambda () (display-line-numbers-mode 0)))
-         (vterm-mode . (lambda ()
-                         ;; Use JetBrains Mono Nerd Font for icons support
-                         (condition-case nil
-                             (progn
-                               (setq-local buffer-face-mode-face '(:family "JetBrainsMono Nerd Font" :height 120))
-                               (buffer-face-mode t))
-                           (error
-                            ;; Fallback to Menlo if Nerd Font not available
-                            (setq-local buffer-face-mode-face '(:family "Menlo" :height 120))
-                            (buffer-face-mode t))))))
+  :hook (vterm-mode . my/vterm-setup)
   :config
-  ;; Set shell to zsh (since you're on macOS)
   (setq vterm-shell "/bin/zsh")
-  ;; Increase scrollback buffer
   (setq vterm-max-scrollback 10000)
-  ;; Kill buffer when terminal process exits
   (setq vterm-kill-buffer-on-exit t)
-  ;; Always use current directory for new vterm buffers
+  ;; Build without asking, and against the vendored libvterm. Linking the
+  ;; system dylib is the classic Apple-Silicon failure: a stray x86_64
+  ;; /usr/local/lib/libvterm.dylib gets picked up and the link fails with
+  ;; "building for macOS-arm64 but attempting to link with file built for
+  ;; macOS-x86_64".
   (setq vterm-always-compile-module t)
+  (setq vterm-module-cmake-args "-DUSE_SYSTEM_LIBVTERM=OFF")
+
+  (defun my/vterm-setup ()
+    "Drop line numbers and use a Nerd Font so shell icons render."
+    (display-line-numbers-mode 0)
+    (setq-local buffer-face-mode-face
+                (if (find-font (font-spec :family "JetBrainsMono Nerd Font"))
+                    '(:family "JetBrainsMono Nerd Font" :height 120)
+                  '(:family "Menlo" :height 120)))
+    (buffer-face-mode t))
+
   :bind (("C-c t" . vterm)))
 
 ;; multi-vterm : https://github.com/suonlight/multi-vterm
@@ -502,39 +508,26 @@ with `flycheck-command-wrapper-function', which receives the whole argv."
 (use-package aidermacs
   :straight (aidermacs :type git :host github :repo "MatthewZMD/aidermacs")
   :init
-  ;; Route Aider through OpenRouter (OpenAI-compatible)
+  ;; Route Aider through OpenRouter (OpenAI-compatible). The key comes from
+  ;; .env via my/load-dotenv in early-init.el.
   (setenv "OPENAI_API_BASE" "https://openrouter.ai/api/v1")
-  (when-let ((key (getenv "OPENROUTER_API_KEY")))
+  (when-let* ((key (getenv "OPENROUTER_API_KEY")))
     (setenv "OPENAI_API_KEY" key))
   :custom
-  ;; Use vshell backend (install vshell from MELPA if you don't have it)
-  (aidermacs-terminal-backend 'vterm)
-  ;; Aider binary (pipx/pip install aider-chat)
-  (aidermacs-program (or (executable-find "aider") (expand-file-name "~/.local/bin/aider")))
-  ;; Pick any OpenRouter model ID you want
+  ;; The variable is `aidermacs-backend', not `aidermacs-terminal-backend' --
+  ;; the old name was never read, so this had silently stayed on comint.
+  (aidermacs-backend 'vterm)
+  ;; Upstream default is '("aider-ce" "aider"); keep the fallback order and
+  ;; let aidermacs-get-program resolve it against exec-path.
+  (aidermacs-program '("aider-ce" "aider"))
   (aidermacs-default-model "openai/gpt-5")
-
-  ;; Helpers to drop files from Aider's context
-  (defun my/aidermacs-drop-current-file ()
-    "Remove current file from Aider context."
-    (interactive)
-    (cond
-     ((not buffer-file-name) (user-error "No file associated with this buffer"))
-     ((fboundp 'aidermacs-drop-file) (aidermacs-drop-file buffer-file-name))
-     (t (user-error "Function aidermacs-drop-file not available; update aidermacs"))))
-
-  (defun my/aidermacs-drop-all ()
-    "Remove all files from Aider context."
-    (interactive)
-    (if (fboundp 'aidermacs-drop-all)
-	(aidermacs-drop-all)
-      (user-error "Function aidermacs-drop-all not available; update aidermacs")))
-
-  :bind (("C-c a a" . aidermacs-run)                ; start Aider in project
-         ("C-c a s" . aidermacs-question-code)      ; ask about region/code
-         ("C-c a f" . aidermacs-add-file)           ; add file (pick)
-         ("C-c a b" . aidermacs-add-current-file)   ; add current buffer's file
-         ("C-c a k" . aidermacs-exit)))             ; quit session
+  :bind (("C-c a a" . aidermacs-run)
+         ("C-c a s" . aidermacs-question-code)
+         ("C-c a f" . aidermacs-add-file)
+         ("C-c a b" . aidermacs-add-current-file)
+         ("C-c a r" . aidermacs-drop-current-file)
+         ("C-c a R" . aidermacs-drop-all-files)
+         ("C-c a k" . aidermacs-exit)))
 
 ;; Ruby project commands, bound under the Hyper "c" prefix.
 (defun my/ruby-format-buffer ()
@@ -567,7 +560,6 @@ with `flycheck-command-wrapper-function', which receives the whole argv."
          (shell-mode . (lambda () (display-line-numbers-mode 0)))
          (ibuffer-mode . (lambda () (display-line-numbers-mode 0)))
          (treemacs-mode . (lambda () (display-line-numbers-mode 0)))
-         (vterm-mode . (lambda () (display-line-numbers-mode 0)))
          (before-save . delete-trailing-whitespace)
          (after-init . (lambda ()
                          ;; restore after startup
