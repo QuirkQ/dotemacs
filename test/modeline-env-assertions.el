@@ -95,9 +95,9 @@ configuration having forgotten one.")
 
 ;;; Behavioural -- open a real Ruby file --------------------------------------
 
-;; Before any Ruby buffer exists: `my/ruby-setup-jfrog-env' runs from
+;; Before any Ruby buffer exists: `my/ruby-start-lsp' runs from
 ;; `ruby-ts-mode-hook' and would reach for the real CLI.
-(setq my/op-executable "/nonexistent/op")
+(setq my-op-executable "/nonexistent/op")
 
 ;; mise asks before trusting a config it has not seen. Nothing here should
 ;; reach that -- the temp directory below is covered by the already-trusted

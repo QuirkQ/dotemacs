@@ -12,9 +12,9 @@
 #      gems, and it lives in 1Password. A GUI-launched Emacs has no shell
 #      environment, so ~/.config/zsh never runs and the `tokens` function
 #      never fires. Emacs now reads that token itself, once per session and
-#      only for projects that use the private gem source (my/jfrog-token in
-#      init.el), and exports it into this process's environment -- so the
-#      fallback below is for standalone callers only.
+#      only for projects that use the private gem source (my-op-get in
+#      lisp/my-op.el), and exports it into this process's environment -- so
+#      the fallback below is for standalone callers only.
 #
 # Mirrors ~/.local/bin/zed-ruby-lsp. Point Zed's lsp.ruby-lsp.binary.path at
 # this file to keep a single shim under version control.

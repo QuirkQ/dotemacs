@@ -84,6 +84,37 @@ else
 fi
 
 echo
+echo "== opening a Ruby file =="
+report=$tmp/ruby-lsp
+
+# Same bare PATH, same reason: a GUI Emacs has no shell session, which is
+# why it has to read the JFrog credential out of 1Password at all. The
+# assertions point `my-op-executable' at a slow stub before any Ruby buffer
+# opens, so the real CLI is never run and no prompt can be raised.
+/usr/bin/script -q /dev/null /usr/bin/env -i \
+  HOME="$HOME" \
+  TMPDIR="$tmp" \
+  TERM=xterm-256color \
+  LANG="${LANG:-en_US.UTF-8}" \
+  SHELL=/bin/zsh \
+  PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+  RUBY_LSP_REPORT="$report" \
+  "$EMACS" -nw -l "$root/test/ruby-lsp-assertions.el" >/dev/null 2>&1
+
+if [[ -s $report ]]; then
+  printf '\n--- ruby lsp ---\n' >>"$log"
+  cat "$report" >>"$log"
+  if grep -q '^ruby-lsp: ok' "$report"; then
+    pass "$(grep '^ruby-lsp: ok' "$report")"
+  else
+    bad "ruby file assertions"
+    sed 's/^/       /' "$report"
+  fi
+else
+  bad "Emacs produced no report -- it died before the assertions ran"
+fi
+
+echo
 if (( fail )); then
   echo "check-runtime: FAILED (details in test/check-runtime.log)"
 else
