@@ -15,8 +15,10 @@ never load.
 | `early-init.el` | `.env` loading, GC threshold, backup/auto-save off, `explicit-shell-file-name` |
 | `init.el` | everything else |
 | `lisp/my-hyper.el` | the Caps-Lock Hyper key layer; a pure keymap that requires nothing, so it loads under `emacs -Q --batch` |
+| `lisp/my-op.el` | the 1Password reader — one asynchronous `op` call per session for every secret; depends on no package, so it loads under `emacs -Q --batch` |
 | `bin/mise-ruby-lsp` | ruby-lsp launcher for eglot (mise Ruby + the JFrog Bundler credential) |
 | `test/check-config.sh` | offline static checks |
+| `test/check-runtime.sh` | launches the real Emacs with a Dock-like environment and asserts what only exists after init |
 | `.env.example` | template for `.env`, which is gitignored |
 
 ## Requirements
@@ -31,10 +33,13 @@ Before the first launch:
 - **Karabiner-Elements**, with the Caps-Lock rule described below. Without it the
   whole Hyper layer is unreachable.
 - **1Password CLI** — the `1password-cli` cask, at `/opt/homebrew/bin/op`, with
-  desktop-app integration enabled. Only needed for Ruby projects whose gems come
-  from `nedap.jfrog.io`.
+  desktop-app integration enabled. Needed for Ruby projects whose gems come from
+  `nedap.jfrog.io`, and for Forge. See [Secrets](#secrets).
 - **A GitHub SSH key** — `straight-vc-git-default-protocol` is `ssh`, so every
   package clone goes over SSH.
+- **`git config --global github.user QuirkQ`** — ghub reads the GitHub username
+  from Git, not from Emacs, and signals when it is missing. Not a secret; the
+  token that goes with it comes from 1Password.
 - **JetBrains Mono Nerd Font** — `brew install --cask font-jetbrains-mono-nerd-font`.
 - **`.env`** — copy `.env.example` and fill in `OPENROUTER_API_KEY` if aidermacs
   will be used. `early-init.el` loads it; the file is gitignored.
@@ -202,6 +207,90 @@ in `~/.config/zed/keymap.json`, so jump-to-definition and jump-back carry betwee
 the two editors. `Hyper-SPC` does not: here it is `kmacro-end-or-call-macro`,
 where Zed uses that chord for `editor::AcceptEditPrediction`.
 
+## Secrets
+
+`lisp/my-op.el` is the only thing here that talks to 1Password. It reads **every**
+secret the configuration needs in a single `op inject`, at most once per Emacs
+session:
+
+```elisp
+(my-op-get-async 'jfrog-token #'f)  ; never blocks; f is called with the value
+(my-op-get 'jfrog-token)            ; blocks; Bundler credential for nedap.jfrog.io
+(my-op-get 'github-token)           ; blocks; the PAT Forge authenticates with
+(my-op-refresh)                     ; forget them and read again
+```
+
+One call, not one per secret, for the same reason
+`~/.config/zsh/functions/tokens` does it that way: a GUI Emacs has no shell
+session, so there is no `op` session token to reuse and *every* invocation can
+raise its own biometric prompt. Both read from the same account and vault as
+that shell function, so the two stay in step.
+
+### Why the read is asynchronous
+
+`op` does not answer until a human has answered a Touch ID prompt, and the first
+caller of the session is a mode hook — opening a `.rb` file. Read with
+`call-process` from there, that wait held Emacs's only Lisp thread for its whole
+duration: no redisplay, so the frame went blank the moment the 1Password sheet
+uncovered it, and no keyboard input either, so `C-g` could not get in. Opening a
+Ruby file could only be escaped by force-quitting Emacs.
+
+So `my-op-get-async` is the entry point for anywhere that wait would be
+unattended, and it is what `ruby-ts-mode-hook` uses. `my-op-get` still blocks and
+is for the callers that cannot defer — `auth-source` is synchronous by contract,
+so the Forge path is one — but it waits inside `accept-process-output`, which
+keeps servicing input, so `C-g` works and the frame is not left unpainted.
+
+The cache has four states — never asked, *in flight*, the secrets, and *asked and
+failed*. `in-flight` is what keeps one prompt per session true now that the read
+is asynchronous: everyone who asks while `op` is out queues behind the process
+already running instead of starting — and prompting for — one of their own. That
+holds for a blocking caller arriving mid-flight too. `failed` is what stops a
+locked 1Password from sending every Ruby buffer and every Forge request back to
+`op`, which is the prompt storm the whole file exists to prevent.
+
+Failure is never fatal and never signals: the first call can come from a mode
+hook, where a signal would take `eglot-ensure` down with it. A missing CLI, a
+locked vault or a renamed field each report a message and yield nil, and the
+callers carry on without the credential. `M-x my-op-refresh` retries — for after
+a token rotates, or after unlocking 1Password following a failed read.
+
+An empty field is reported but only nils out its own key. A broken GitHub item
+must not cost the Ruby setup its Bundler credential.
+
+Only `op://` paths are in this repository. The values they resolve to must never
+reach a file, a log, a commit or `message`.
+
+`test/op-assertions.el` drives all of this against a stub CLI in a temp
+directory, so the checks stay offline and cannot raise a prompt.
+
+## Forge
+
+[Forge](https://github.com/magit/forge) is loaded `:after magit`, so it comes up
+with the first `C-x g` and adds its issue and pull-request sections and its own
+keys inside Magit. It keeps a cache at `forge-database.sqlite`, which is
+gitignored; Emacs 31's built-in SQLite means emacsql needs nothing compiled.
+
+Forge holds no token of its own — ghub looks one up through `auth-source`,
+keyed on the API host and an ident of `<github.user>^forge`. So the token
+arrives by answering that query rather than by an `~/.authinfo` entry, and it
+stays in 1Password and in memory:
+
+- `my/github-auth-source-search` answers for `api.github.com` and `github.com`
+  with `(my-op-get 'github-token)`, and returns nil for everything else.
+- `my/github-auth-source-backend` wraps it as an `auth-source` backend, hooked
+  onto `auth-source-backend-parser-functions` and put at the front of
+  `auth-sources`.
+
+The backend has to do its own host matching. `auth-source-search` does not
+re-check a backend's results against the spec it was given, so a search function
+that answered indiscriminately would hand the GitHub token to the next caller
+that asked auth-source for an SMTP password. A wildcard host (`t`) deliberately
+does not match either.
+
+When 1Password comes up empty the search returns nothing rather than an empty
+credential, and auth-source falls through to the netrc backends behind it.
+
 ## Ruby
 
 ### ruby-lsp under mise
@@ -229,29 +318,38 @@ at the copy in `~/.local/bin`.
 
 ### The JFrog token
 
-`init.el` reads the token, not the shim. `my/jfrog-token` runs `op read` **at most
-once per Emacs session**, and only from a buffer whose project references
-`nedap.jfrog.io` in its `Gemfile` or `Gemfile.lock`. Projects that do not use the
-private source never reach 1Password at all. The value is consed onto the
-buffer-local `process-environment` as `BUNDLE_NEDAP__JFROG__IO`, which the
-language server inherits when eglot connects.
+`init.el` supplies the token, not the shim. The read itself belongs to
+[`lisp/my-op.el`](#secrets); what is Ruby-specific is *when* it is asked for and
+*how* it gets to the server.
 
-Caching it matters because there is no shell session, so there is no `op` session
-token to reuse and every `op read` can raise its own biometric prompt — and eglot
-launches the shim once per language server: one per project, one after every
-server restart, one after every Emacs restart.
+It is asked for only from a buffer whose project references `nedap.jfrog.io` in
+its `Gemfile` or `Gemfile.lock`. Projects that do not use the private source
+never reach 1Password at all. The value is then consed onto the buffer-local
+`process-environment` as `BUNDLE_NEDAP__JFROG__IO`, which the language server
+inherits when eglot connects.
 
-`M-x my/jfrog-token-refresh` forgets the cached value and reads it again — for
-after the token rotates, or after unlocking 1Password following a failed read.
-Buffers already carrying the old value pick up the new one when their language
+Doing it here rather than in the shim matters because eglot launches the shim
+once per language server — one per project, one after every server restart, one
+after every Emacs restart — and each of those launches could otherwise raise its
+own biometric prompt.
+
+**It is the server start that waits for 1Password, not the editor.**
+`ruby-ts-mode-hook` runs `my/ruby-start-lsp`, which asks through
+[`my-op-get-async`](#why-the-read-is-asynchronous) and returns immediately;
+`eglot-ensure` is called from the callback, once the token is in hand. Where no
+credential is needed — most projects, and every buffer after the session's one
+read — it is the same immediate `eglot-ensure` as before. This is why
+`ruby-ts-mode` and `ruby-mode` are *not* in eglot's own `:hook`.
+
+Consed onto `process-environment`, never assigned over it, so mise's Ruby stays
+on the buffer's `PATH` whichever of the two got there first. Arriving after mise
+is fine: `mise--update` runs once per file buffer, at
+`after-change-major-mode-hook`.
+
+A failed read is not fatal. It reports a message and starts ruby-lsp anyway,
+which is still useful in projects whose Artifactory gems are already installed.
+Buffers already carrying an old value pick up a refreshed one when their language
 server next restarts.
-
-A failed read is not fatal. It reports a message and leaves ruby-lsp running,
-which is still useful in projects with no Artifactory gems.
-
-Only the `op://` reference is in this repository (`my/jfrog-op-reference` in
-`init.el`, `OP_REF` in the shim). The value it resolves to must never reach a
-file, a log, a commit or `message`.
 
 ### Diagnostics
 
@@ -466,7 +564,7 @@ into `~/.emacs.d/emojis`, which does not exist, so nothing rendered.
 ## Packages
 
 - **Completion and search** — ivy, counsel, swiper; company with company-box.
-- **Git** — magit, transient, ibuffer-vc, treemacs-magit.
+- **Git** — magit, forge, transient, ibuffer-vc, treemacs-magit.
 - **Project and files** — built-in `project`, treemacs with the nerd-icons theme,
   dashboard, page-break-lines.
 - **Environment** — mise.el. `global-mise-mode` hooks `find-file` and friends
@@ -545,12 +643,46 @@ EMACS=/path/to/Emacs ./test/check-config.sh
 ```
 
 An offline static gate: it syntax-checks the shims in `bin/`, byte-compiles
-`early-init.el`, `init.el` and `lisp/my-hyper.el` looking for blocking warnings,
-and loads the Hyper layer in batch to assert its bindings resolve. It never
-starts a server, fetches a package, or writes into `straight/` or `eln-cache/`.
-It currently passes.
+`early-init.el`, `init.el`, `lisp/my-hyper.el` and `lisp/my-op.el` looking for
+blocking warnings, loads the Hyper layer in batch to assert its bindings
+resolve, and runs `test/op-assertions.el` against a stub 1Password CLI. It
+never starts a server, fetches a package, writes into `straight/` or
+`eln-cache/`, or touches the real `op`. It currently passes.
 
-The real test is launching Emacs, which the harness deliberately does not do.
+```
+./test/check-runtime.sh
+EMACS=/path/to/Emacs ./test/check-runtime.sh
+```
+
+The other half: it actually launches Emacs, because some things do not exist
+until init.el has run and every package has loaded — the order of
+`after-change-major-mode-hook` above all. Two files:
+
+- `test/modeline-env-assertions.el` opens a real Ruby buffer and asserts that
+  the modeline's version indicator measures the interpreter *that buffer* would
+  run rather than one resolved before mise set the buffer's `exec-path`.
+- `test/ruby-lsp-assertions.el` points `my-op-executable` at a stub `op` that
+  sleeps for five seconds, opens a Ruby file in a project that needs the JFrog
+  credential, and asserts that `find-file` returns *while the read is still in
+  flight* — the reader's own `in-flight` state says so, which is a fact about
+  the run and not about the clock. Then that ruby-lsp is started afterwards,
+  from the callback, with the token on the buffer's `process-environment`.
+  Against the old synchronous reader `find-file` took the full five seconds,
+  and against the real `op` that wait was however long the user took to answer
+  a Touch ID prompt — with the frame blank and `C-g` dead for the duration.
+
+Emacs is launched through `env -i` with a bare `PATH`, the way the Dock and
+Spotlight launch it, and that is the point of the whole file. An interactive
+zsh has already run `mise activate`, so a test that inherits your shell's
+`PATH` carries a mise interpreter in from outside and cannot see this class of
+bug at all — which is exactly how the modeline came to report Ruby 2.6.10 for
+months while looking correct every time it was checked from a terminal.
+
+Unlike `check-config.sh` this one is not side-effect free: it loads the real
+configuration, so straight.el may rebuild a package. It fetches nothing and
+writes nothing outside this repository, and it gets a `TMPDIR` of its own so
+the `server-start` in init.el cannot collide with a running session's socket.
+It currently passes.
 
 ## Known gaps
 
