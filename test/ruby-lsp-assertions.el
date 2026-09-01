@@ -118,6 +118,23 @@ sed -e 's|{{ op://[^/]*/\\(.*\\) }}|value:\\1|'
 (advice-add 'y-or-n-p :override
             (lambda (&rest args) (push args ruby-lsp-questions) t))
 
+;;; The connect budget --------------------------------------------------------
+
+;; Before the advice below, and on purpose: `eglot-ensure' is the autoload
+;; that pulls eglot in, so overriding it first would leave eglot -- and the
+;; `use-package' `:config' block that configures it -- never loaded at all.
+(require 'eglot)
+
+;; Not behaviour this file can drive: exceeding the budget takes a real
+;; bundler run against a real Artifactory. But the number is load-bearing
+;; and reverts to eglot's 30 the moment the `setq' is dropped. ruby-lsp
+;; holds `initialize' open for the whole of its composed-bundle setup --
+;; measured at 15 seconds in epoxy with the bundle already up to date, and
+;; minutes when it has to resolve gems -- and overrunning the budget does
+;; not merely give up, it SIGKILLs bundler mid-install.
+(ruby-lsp-expect "the connect budget covers a bundler run"
+                 t (>= eglot-connect-timeout 120))
+
 ;; Record the server start instead of making one. What is under test is
 ;; *when* eglot is asked to connect, not ruby-lsp itself -- and a real
 ;; language server would take a bundle, a mise ruby and a network besides.

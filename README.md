@@ -542,6 +542,24 @@ Inside a ghostel buffer, `C-c C-t` is copy mode from `ghostel-mode-map`, which
 outranks the global `C-c C-t` — the same arrangement `vterm-copy-mode` had with
 `multi-vterm`.
 
+### Which keys Emacs still gets
+
+`ghostel-keymap-exceptions` is the list of keys semi-char mode — the default
+input mode — leaves alone; everything else goes to the pty. Upstream's default is
+`C-c C-x C-u C-h M-x M-: C-\`, and this config appends **`M-o`**, so
+`other-window` works from inside a terminal like it does everywhere else.
+Appending rather than restating the list keeps upstream's entries whatever they
+grow into.
+
+The list is read when the keymap is built, not per keypress, so it has to be set
+through the custom machinery: the defcustom's `:set` calls
+`ghostel--rebuild-semi-char-keymap`, which is what turns an exception into an
+actual binding. That rebuild mutates the keymap object in place, so terminals
+that are already open pick up a change too.
+
+The cost is that the excepted key no longer reaches the application. Char mode
+(`C-c M-d`) is the escape hatch — it binds every key and ignores the list.
+
 ## Fonts, icons and emoji
 
 The default face, `fixed-pitch` and `nerd-icons-font-family` all resolve through

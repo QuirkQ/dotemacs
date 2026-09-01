@@ -523,6 +523,27 @@ of `auth-sources' rather than returning a credential that is empty.
   ;; ruby-lsp diagnostics back instead.
   (setq eglot-stay-out-of '(flymake))
 
+  ;; ruby-lsp does not answer `initialize' until its composed bundle is
+  ;; ready. exe/ruby-lsp runs `bundle check || bundle install' over
+  ;; .ruby-lsp/Gemfile before the JSON-RPC loop starts, and narrates it on
+  ;; stderr -- "Running bundle install for the composed bundle. This may
+  ;; take a while..." -- so the handshake is held open for a whole bundler
+  ;; run. In epoxy that is 15 seconds with the composed bundle already up
+  ;; to date, and minutes whenever it has to resolve against nedap.jfrog.io.
+  ;;
+  ;; Eglot's 30-second default does not cover that, and overrunning it is
+  ;; worse than slow: the timeout calls `jsonrpc-shutdown', which SIGKILLs
+  ;; the server -- "Server exited with status 9" -- and that is bundler
+  ;; killed mid-install, leaving the next attempt to start over on the
+  ;; half-written .ruby-lsp/Gemfile.lock it left behind.
+  ;;
+  ;; The number is not a stall risk. A shim that cannot start exits
+  ;; non-zero, the sentinel fires, and eglot reports it on the spot; this
+  ;; budget is only ever spent on a server that is alive and working. And
+  ;; nothing waits on it -- `eglot-sync-connect' gives the handshake three
+  ;; seconds of the command loop and hands the rest to the event loop.
+  (setq eglot-connect-timeout 300)
+
   (defun my/eglot-format-on-save ()
     "Format Ruby buffers with the language server on save.
 Mirrors \"format_on_save\": \"on\" for Ruby in ~/.config/zed/settings.json.
@@ -1064,6 +1085,30 @@ with `flycheck-command-wrapper-function', which receives the whole argv."
   ;; `ghostel-adaptive-fps' (default t) varies it under load, which beats any
   ;; fixed value. `ghostel-max-scrollback' is left at its 5MB default too;
   ;; vterm's 10000 was a line count and does not translate.
+
+  ;; Let M-o out of the terminal. It is `other-window' globally (iflipb's
+  ;; `:bind', above), but semi-char mode -- the default input mode -- sent it
+  ;; to the pty instead: `ghostel--define-terminal-keys' (ghostel.el:1169)
+  ;; binds every M-<printable ASCII> to `ghostel--send-event' unless the key
+  ;; is named in `ghostel-keymap-exceptions'. Naming it leaves M-o unbound in
+  ;; `ghostel-semi-char-mode-map', so it falls through to the global map.
+  ;;
+  ;; `setopt' rather than `add-to-list', because the list is not consulted per
+  ;; keypress -- it is read once, when the keymap is built. The defcustom's
+  ;; `:set' calls `ghostel--rebuild-semi-char-keymap', which is the only thing
+  ;; that turns a new exception into an actual binding; a plain list mutation
+  ;; would sit there doing nothing. The rebuild mutates the existing keymap
+  ;; object in place, so terminals that are already open pick this up too.
+  ;;
+  ;; Appending to the current value rather than restating it keeps upstream's
+  ;; defaults (C-c, C-x, C-u, C-h, M-x, M-:, C-\) whatever they grow into.
+  ;;
+  ;; The trade is that Alt-o no longer reaches the application. Char mode
+  ;; (`C-c M-d') is the escape hatch for anything that wants it: char mode
+  ;; binds every key with NO-EXCEPTIONS and ignores this list entirely.
+  (unless (member "M-o" ghostel-keymap-exceptions)
+    (setopt ghostel-keymap-exceptions
+            (append ghostel-keymap-exceptions '("M-o"))))
 
   (defun my/ghostel-setup ()
     "Drop line numbers, use a Nerd Font, and keep terminal glyphs literal."
