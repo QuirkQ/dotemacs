@@ -175,7 +175,8 @@ so the diagnostics are assertable and the log stays readable."
   (my-op-refresh)
   (my-op-expect "my-op-refresh re-reads" 2 (my-op-test-calls))
   (my-op-expect "value survives a refresh"
-                "value:jfrog/token" (my-op-get 'jfrog-token)))
+                (concat "value:" (alist-get 'jfrog-token my-op-secrets))
+                (my-op-get 'jfrog-token)))
 
 ;; The reason `my-op-get-async' exists.
 ;;
@@ -208,7 +209,8 @@ so the diagnostics are assertable and the log stays readable."
 
     (my-op-test-wait (lambda () (not (eq landed 'pending))) 30)
     (my-op-expect "the callback is handed the value"
-                  "value:jfrog/token" landed)
+                  (concat "value:" (alist-get 'jfrog-token my-op-secrets))
+                  landed)
     (my-op-expect "one op invocation for the whole flight" 1
                   (my-op-test-calls))))
 
@@ -218,7 +220,8 @@ so the diagnostics are assertable and the log stays readable."
 (my-op-test-scenario ("MY_OP_TEST_SLEEP=1")
   (my-op-get-async 'jfrog-token #'ignore)
   (my-op-expect "a blocking get joins the in-flight run"
-                "value:github/token" (my-op-get 'github-token))
+                (concat "value:" (alist-get 'github-token my-op-secrets))
+                (my-op-get 'github-token))
   (my-op-expect "joining costs no second invocation" 1 (my-op-test-calls)))
 
 ;; A non-zero exit yields nil, reports what op said, and -- the reason the
@@ -234,14 +237,17 @@ so the diagnostics are assertable and the log stays readable."
 ;; The markers around the template are what make this survivable.
 (my-op-test-scenario ("MY_OP_TEST_BANNER=A new version of op is available")
   (my-op-expect "a banner on stdout does not shift the values"
-                "value:jfrog/token" (my-op-get 'jfrog-token))
+                (concat "value:" (alist-get 'jfrog-token my-op-secrets))
+                (my-op-get 'jfrog-token))
   (my-op-expect "a banner on stdout does not corrupt the last value"
-                "value:github/token" (my-op-get 'github-token)))
+                (concat "value:" (alist-get 'github-token my-op-secrets))
+                (my-op-get 'github-token)))
 
 ;; stdout and stderr must not share a stream.
 (my-op-test-scenario ("MY_OP_TEST_STDERR=[deprecation] --account is changing")
   (my-op-expect "stderr never lands on a value"
-                "value:jfrog/token" (my-op-get 'jfrog-token)))
+                (concat "value:" (alist-get 'jfrog-token my-op-secrets))
+                (my-op-get 'jfrog-token)))
 
 ;; An empty field is a broken vault item, not a broken session: it must not
 ;; take the other secrets down with it.
@@ -249,7 +255,8 @@ so the diagnostics are assertable and the log stays readable."
                               (alist-get 'github-token my-op-secrets)))
   (my-op-expect "an empty field yields nil" nil (my-op-get 'github-token))
   (my-op-expect "an empty field spares the other secrets"
-                "value:jfrog/token" (my-op-get 'jfrog-token))
+                (concat "value:" (alist-get 'jfrog-token my-op-secrets))
+                (my-op-get 'jfrog-token))
   (my-op-expect-message "an empty field is reported" "github-token"))
 
 ;; No CLI installed: nil, said once, and no attempt to run anything.
@@ -258,6 +265,15 @@ so the diagnostics are assertable and the log stays readable."
     (my-op-expect "a missing CLI yields nil" nil (my-op-get 'jfrog-token))
     (my-op-expect-message "a missing CLI is reported" "absent")
     (my-op-expect "a missing CLI runs nothing" 0 (my-op-test-calls))))
+
+;; No coordinates -- a fresh clone without .env, or a test run under
+;; emacs -Q --batch with no OP_* in the environment: nil, said once, and
+;; exactly like a locked vault rather than a crash.
+(my-op-test-scenario ()
+  (let ((my-op-account nil) (my-op-vault nil) (my-op-secrets nil))
+    (my-op-expect "no coordinates yields nil" nil (my-op-get 'jfrog-token))
+    (my-op-expect-message "missing coordinates are reported" "OP_ACCOUNT")
+    (my-op-expect "no coordinates runs nothing" 0 (my-op-test-calls))))
 
 ;;; ---------------------------------------------------------------------------
 

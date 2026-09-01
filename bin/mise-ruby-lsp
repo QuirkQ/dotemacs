@@ -21,13 +21,27 @@
 
 set -eu
 
+# The 1Password coordinates (account, vault, item path) come from .env at
+# the root of this configuration -- see .env.example, and copy it to .env
+# (gitignored). A GUI Emacs reads the same file through my/load-dotenv in
+# early-init.el, so both sides agree on where the token lives.
+ENV_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.env"
+if [ -f "$ENV_FILE" ]; then
+  set -a
+  . "$ENV_FILE"
+  set +a
+fi
+
 OP=/opt/homebrew/bin/op
 MISE=/opt/homebrew/bin/mise
 MKTEMP=/usr/bin/mktemp
 CAT=/bin/cat
 RM=/bin/rm
-OP_ACCOUNT=your-account.1password.com
-OP_REF='op://your-vault-uuid/jfrog/token'
+
+OP_ACCOUNT=${OP_ACCOUNT:-}
+OP_VAULT=${OP_VAULT:-}
+OP_JFROG_ITEM=${OP_JFROG_ITEM:-}
+OP_REF="op://${OP_VAULT}/${OP_JFROG_ITEM}"
 
 # Fast path: the caller already supplied the credential, so there is nothing
 # for `op' to do. This is the case eglot hits -- it launches this shim once
@@ -53,7 +67,11 @@ else
   op_err_sink=/dev/null
 fi
 
-if token=$("$OP" read --account "$OP_ACCOUNT" "$OP_REF" 2>"$op_err_sink"); then
+if [ -z "$OP_ACCOUNT" ] || [ -z "$OP_VAULT" ] || [ -z "$OP_JFROG_ITEM" ]; then
+  # Not fatal, same as a failed read: ruby-lsp is still useful in projects
+  # with no Artifactory gems. Point at the fix, then carry on without it.
+  echo "mise-ruby-lsp: OP_ACCOUNT/OP_VAULT/OP_JFROG_ITEM unset -- copy .env.example to .env and fill it in" >&2
+elif token=$("$OP" read --account "$OP_ACCOUNT" "$OP_REF" 2>"$op_err_sink"); then
   export BUNDLE_NEDAP__JFROG__IO="$token"
 else
   # Not fatal: ruby-lsp is still useful in projects with no Artifactory

@@ -169,7 +169,8 @@ sed -e 's|{{ op://[^/]*/\\(.*\\) }}|value:\\1|'
     (ruby-lsp-expect "the buffer is in a Ruby mode"
                      t (and (derived-mode-p 'ruby-ts-mode 'ruby-mode) t))
     (ruby-lsp-expect "the credential reached the buffer's environment"
-                     "value:jfrog/token" (getenv my/jfrog-bundle-variable))
+                      (concat "value:" (alist-get 'jfrog-token my-op-secrets))
+                      (getenv my/jfrog-bundle-variable))
     ;; Consed on, never assigned over: mise's PATH has to survive it.
     (ruby-lsp-expect "mise still owns the buffer's exec-path"
                      nil (equal exec-path (default-value 'exec-path))))

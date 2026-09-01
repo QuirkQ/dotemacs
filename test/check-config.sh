@@ -26,6 +26,15 @@ fi
 
 : >"$log"
 
+# 1Password coordinates for the reader assertions. Process environment wins
+# over .env in my-op.el, and these values only stand in when nothing --
+# neither OP_* here nor a .env for the real runtime path -- supplied them.
+: "${OP_ACCOUNT:=test.1password.example}"
+: "${OP_VAULT:=test-vault}"
+: "${OP_JFROG_ITEM:=jfrog/token}"
+: "${OP_GITHUB_ITEM:=github/token}"
+export OP_ACCOUNT OP_VAULT OP_JFROG_ITEM OP_GITHUB_ITEM
+
 echo "== shell shims =="
 shopt -s nullglob
 shims=("$root"/bin/*)

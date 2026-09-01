@@ -31,7 +31,15 @@
 ;;
 ;; Nothing here may let a secret escape.  The values never reach a file, a
 ;; log, a commit or `message'.  Only op:// references are written down --
-;; in this file, and in the 0600 template `my-op--start' hands the CLI.
+;; in the 0600 template `my-op--start' hands the CLI.
+;;
+;; Where the secrets live -- the account, the vault and the item paths --
+;; is not hardcoded either.  Those coordinates come from the environment:
+;; OP_ACCOUNT, OP_VAULT and one OP_<KEY>_ITEM per entry of
+;; `my-op-secrets', which `my/load-dotenv' in early-init.el populates from
+;; the gitignored .env next to init.el.  .env.example documents the shape;
+;; with none of it set, every read settles as unavailable, exactly like a
+;; locked vault.
 ;;
 ;; No package depends on this file, so it loads under emacs -Q --batch and
 ;; test/op-assertions.el can drive it against a stub CLI.
@@ -46,26 +54,30 @@
 Not `executable-find': a GUI Emacs starts with no shell PATH, and the
 first call can come from a mode hook.")
 
-(defvar my-op-account "your-account.1password.com"
+(defvar my-op-account (getenv "OP_ACCOUNT")
   "1Password account holding the secrets.
-Two accounts are signed in on this machine, so pinning one is what keeps
-the references below unambiguous.")
+From the environment, populated by `my/load-dotenv' in early-init.el from
+the gitignored .env next to init.el -- see .env.example.  Without it every
+read settles as unavailable, exactly like a locked vault.")
 
-(defvar my-op-vault "your-vault-uuid"
-  "Vault holding the secrets, by UUID.
-A UUID rather than a name so renaming the vault in 1Password does not
-silently break every reference.")
+(defvar my-op-vault (getenv "OP_VAULT")
+  "Vault holding the secrets.
+A UUID rather than a name so renaming the vault does not silently break
+every reference; from the environment like `my-op-account'.")
 
 (defvar my-op-secrets
-  '((jfrog-token  . "jfrog/token")
-    (github-token . "github/token"))
+  (delq nil
+        (list (when-let* ((path (getenv "OP_JFROG_ITEM")))
+                (cons 'jfrog-token path))
+              (when-let* ((path (getenv "OP_GITHUB_ITEM")))
+                (cons 'github-token path))))
   "Alist of KEY to its item path below `my-op-vault'.
-Only paths belong in this repository.  The values they resolve to must
-never reach a file, a log, a commit or `message'.
+The paths come from OP_<KEY>_ITEM in the environment, same as the account
+and vault above.  Keys are symbols in lowercase; add one by naming an
+environment variable OP_<UPPERCASE KEY>_ITEM.
 
-The JFrog field already holds \"<username>:<token>\", which is exactly
-what Bundler wants, so it goes across untouched.  The GitHub token lives
-in the \"add more\" section of the github item, hence the extra segment.")
+Only paths belong in the environment.  The values they resolve to must
+never reach a file, a log, a commit or `message'.")
 
 ;; A template the shape of the output makes the reply self-delimiting. That
 ;; matters because of a bug this configuration has already been bitten by
@@ -214,6 +226,10 @@ Never signals: the first call can come from a mode hook, where a signal
 would abort the rest of the hook -- `eglot-ensure' included."
   (cond
    ((not (eq my-op--cache 'untried)) nil)
+   ((or (not my-op-account) (not my-op-vault) (null my-op-secrets))
+    (message "1Password: OP_ACCOUNT/OP_VAULT/OP_*_ITEM unset -- copy \
+.env.example to .env (it is gitignored), then M-x my-op-refresh")
+    (my-op--settle 'failed))
    ((not (file-executable-p my-op-executable))
     (message "1Password: no CLI at %s (brew install --cask 1password-cli)"
              my-op-executable)

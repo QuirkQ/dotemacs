@@ -41,8 +41,10 @@ Before the first launch:
   from Git, not from Emacs, and signals when it is missing. Not a secret; the
   token that goes with it comes from 1Password.
 - **JetBrains Mono Nerd Font** — `brew install --cask font-jetbrains-mono-nerd-font`.
-- **`.env`** — copy `.env.example` and fill in `OPENROUTER_API_KEY` if aidermacs
-  will be used. `early-init.el` loads it; the file is gitignored.
+- **`.env`** — copy `.env.example` and fill it in. `OPENROUTER_API_KEY` is for aidermacs;
+  `OP_ACCOUNT`, `OP_VAULT` and the `OP_<KEY>_ITEM` pairs tell the 1Password
+  reader in [`lisp/my-op.el`](#secrets) — and the shim in `bin/` — where the
+  secrets live. `early-init.el` loads it; the file is gitignored.
 
 The first launch is slow and needs the network. straight clones and
 native-compiles every package, and because `~/.emacs.d/tree-sitter` does not
@@ -209,13 +211,17 @@ where Zed uses that chord for `editor::AcceptEditPrediction`.
 
 ## Secrets
 
-`lisp/my-op.el` is the only thing here that talks to 1Password. It reads **every**
-secret the configuration needs in a single `op inject`, at most once per Emacs
-session:
+`lisp/my-op.el` is the only thing here that talks to 1Password. Where the
+secrets live — the account, the vault and one item path per key — comes from
+the environment: `OP_ACCOUNT`, `OP_VAULT` and an `OP_<KEY>_ITEM` per key,
+which `my/load-dotenv` in `early-init.el` populates from the gitignored
+`.env` next to `init.el`. `.env.example` documents the shape; copy it to
+`.env` and fill in your own values. The shim in `bin/` sources the same file
+itself, so Emacs and the standalone launcher agree.
 
 ```elisp
 (my-op-get-async 'jfrog-token #'f)  ; never blocks; f is called with the value
-(my-op-get 'jfrog-token)            ; blocks; Bundler credential for nedap.jfrog.io
+(my-op-get 'jfrog-token)            ; blocks; the Bundler credential key
 (my-op-get 'github-token)           ; blocks; the PAT Forge authenticates with
 (my-op-refresh)                     ; forget them and read again
 ```

@@ -53,6 +53,15 @@ fi
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/emacs-check-runtime.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
 
+# Same reasoning as check-config.sh: without coordinates the reader behaves
+# as if the vault were locked and the assertions below would stand on a
+# scenario that never happens. env -i is what makes these explicit.
+: "${OP_ACCOUNT:=test.1password.example}"
+: "${OP_VAULT:=test-vault}"
+: "${OP_JFROG_ITEM:=jfrog/token}"
+: "${OP_GITHUB_ITEM:=github/token}"
+export OP_ACCOUNT OP_VAULT OP_JFROG_ITEM OP_GITHUB_ITEM
+
 echo "== modeline env indicators =="
 report=$tmp/modeline-env
 
@@ -98,6 +107,10 @@ report=$tmp/ruby-lsp
   LANG="${LANG:-en_US.UTF-8}" \
   SHELL=/bin/zsh \
   PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+  OP_ACCOUNT="$OP_ACCOUNT" \
+  OP_VAULT="$OP_VAULT" \
+  OP_JFROG_ITEM="$OP_JFROG_ITEM" \
+  OP_GITHUB_ITEM="$OP_GITHUB_ITEM" \
   RUBY_LSP_REPORT="$report" \
   "$EMACS" -nw -l "$root/test/ruby-lsp-assertions.el" >/dev/null 2>&1
 
