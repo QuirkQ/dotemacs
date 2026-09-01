@@ -27,8 +27,6 @@ Before the first launch:
   Do not keep an `emacs-plus@N` *formula* installed alongside the cask; both provide
   `emacs` and `emacsclient` in `$(brew --prefix)/bin` and the cask states the
   combination is unsupported.
-- **`brew install cmake libtool`** — for vterm's native module. cmake compiles it;
-  libtool supplies `glibtool`, which the vendored libvterm build calls.
 - **`brew install mise`** — per-project runtimes.
 - **Karabiner-Elements**, with the Caps-Lock rule described below. Without it the
   whole Hyper layer is unreachable.
@@ -127,14 +125,14 @@ The `c` prefix; this is also where the old `<f19> R` Ruby group ended up.
 |-----|---------|-------------|
 | `Hyper-c c` | `compile` | Compile |
 | `Hyper-c r` | `my/ruby-run-tests` | Run this project's Ruby test suite |
-| `Hyper-c R` | `my/rails-console` | Rails console in a vterm |
+| `Hyper-c R` | `my/rails-console` | Rails console in a ghostel terminal |
 | `Hyper-c f` | `my/ruby-format-buffer` | Format via the language server |
 | `Hyper-c l` | `flycheck-list-errors` | List diagnostics |
 | `Hyper-c n` | `xref-find-references` | Find references |
 | `Hyper-c h` | `eldoc-doc-buffer` | Documentation for the symbol at point |
 | `Hyper-c a` | `eglot-code-actions` | Code actions |
 | `Hyper-c d` | `docker` | Docker interface |
-| `Hyper-c t` | `vterm` | Terminal |
+| `Hyper-c t` | `ghostel` | Terminal |
 
 ### LSP navigation
 
@@ -298,8 +296,13 @@ otherwise a `test/` directory plus `bin/rails` means `rails test`, and `test/`
 plus a `Rakefile` means `rake test`. The command is prefixed with `mise x --`,
 plus `bundle exec` when there is a Gemfile.
 
-`Hyper-c R` (`my/rails-console`) runs `mise x -- bundle exec rails console` as the
-vterm shell, and errors out when the project has no `bin/rails`.
+`Hyper-c R` (`my/rails-console`) runs `mise x -- bundle exec rails console`
+through `ghostel-exec`, and errors out when the project has no `bin/rails`.
+`ghostel-exec` takes the command as distinct argv entries — nothing is handed to
+a shell to re-parse — and is documented as skipping the macOS `login(1)` wrap
+that `ghostel-macos-login-shell` applies to interactive shells. The buffer is
+displayed before the process starts, because `ghostel-exec` sizes the pty from
+the window the buffer is already in and falls back to 80×24 otherwise.
 
 The project root for all of these comes from `locate-dominating-file` on
 `Gemfile`, `Gemfile.lock`, then `.git` — not `vc-root-dir`, whose state is
@@ -308,28 +311,138 @@ runs.
 
 ## Terminal
 
-vterm compiles its native module on first load. `vterm-always-compile-module` and
-`vterm-module-cmake-args` are set in `:init`, not `:config`, because vterm.el's
-module check is a top-level form — in `:config` they would land after the load
-and do nothing.
+The terminal is [ghostel](https://github.com/dakra/ghostel), which runs
+libghostty-vt — the VT engine from Ghostty — as a native module. It replaced
+vterm.
 
-`vterm-module-cmake-args` is `-DUSE_SYSTEM_LIBVTERM=OFF`, building against the
-vendored libvterm. Linking the system dylib is the classic Apple-Silicon failure:
-a stray x86_64 `/usr/local/lib/libvterm.dylib` gets picked up and the link fails
-with "building for macOS-arm64 but attempting to link with file built for
-macOS-x86_64".
+The native module is a **prebuilt binary fetched from GitHub releases** on the
+first `M-x ghostel`. `ghostel-module-auto-install` is `download`, so it fetches
+rather than prompting. Nothing is compiled: no cmake, no libtool, no vendored
+libvterm, and none of the Apple-Silicon `libvterm.dylib` archaeology vterm
+needed. `ghostel-module-compile` builds from source instead if you ever want
+that, and needs a Zig toolchain.
 
-The build needs **both** cmake and libtool. Without `glibtool` the cmake step
-fails while vterm still prints "module succeeded", so the failure is easy to
-miss; the tell is that no module file appears.
+The straight recipe carries an explicit `:files` list mirroring MELPA's. The
+Lisp lives in `lisp/`, which straight's default directive already covers, but
+`etc/` holds the bundled `xterm-ghostty` terminfo and `src/` + `vendor/` +
+`build.zig*` are what a local module build would need.
 
-The module lands as `straight/build/vterm/vterm-module.so`. Emacs finds it even
-though `module-file-suffix` is `.dylib`, because `load-suffixes` lists `.so`
-first.
+`ghostel-shell` is `/bin/zsh`. On macOS ghostel additionally wraps it through
+`login(1)` — see `ghostel-macos-login-shell`, on by default — so `~/.zprofile`
+is sourced the way Terminal.app and Ghostty do it. **This is a behaviour change
+from vterm**, whose shell was interactive but not a login shell: anything in
+`~/.zprofile` now runs that previously did not.
 
-An interactive zsh runs `mise activate zsh`, so a vterm shell already has the
+An interactive zsh runs `mise activate zsh`, so a ghostel shell already has the
 project's runtimes. Emacs' own subprocesses do not go through zsh, which is why
 `compile` and flycheck prefix `mise x --`.
+
+### Why ghostel and not vterm
+
+vterm could not draw a full-screen TUI cleanly at any setting, and the reason is
+structural rather than a matter of tuning. libvterm reports damaged cells with
+no notion of where a frame begins or ends, so `vterm-timer-delay` — which
+coalesces every damage report into one `run-with-timer` and drops the rest until
+it fires — was the only lever available, and every value on it traded torn
+frames against dropped ones. Measured here at 290×77 against a pty repainting
+its whole viewport 30 times a second, counting the redraws that survived
+coalescing:
+
+| `vterm-timer-delay` | frames drawn / 90 sent | effective |
+| --- | --- | --- |
+| `0.1` (stock) | 32 | 9 fps |
+| `0.05` | 48 | 13 fps |
+| `0.033` | 92 | 25 fps |
+| `0.02` | 92 | 26 fps |
+| `nil` | 2094 | 544 fps |
+
+There is no good row. The stock 0.1 drops two frames in three; `nil` draws 90
+frames as 2094 partial redraws, which is what a half-drawn frame actually is.
+0.033 was the knee and still tore.
+
+libghostty-vt implements **synchronized output** (DEC mode 2026): the
+application brackets each frame, and the terminal withholds the redraw until the
+frame is complete. Claude Code uses it. So the frame budget stops being a
+setting to tune — which is why none of the measurements above carried over, and
+why `ghostel-timer-delay` is left alone. Upstream's default is already 0.033,
+the same knee, and `ghostel-adaptive-fps` varies it under load.
+
+Two further things deleted configuration outright:
+
+- **`TERM` is `xterm-ghostty` with terminfo bundled in `etc/`**, so a TUI
+  queries the terminal's real capabilities instead of assuming a 1990s xterm.
+- **The wheel is bound natively** (`ghostel.el:1072`) at
+  `emulation-mode-map-alists` priority, and copy mode exits itself. vterm bound
+  no wheel events at all, so the trackpad fell through to `mwheel-scroll` and
+  the next redraw called `vterm-reset-cursor-point` and yanked you back to the
+  prompt. Making that stick took ~60 lines: enter copy mode on wheel-up, leave
+  on wheel-down, remap `self-insert-command` so typing resumed, and bind every
+  double- and triple- spelling a fast trackpad flick produces. All gone, and so
+  is the caveat that came with it — vterm's copy mode called `vterm-send-stop`,
+  XOFF on the pty, so scrolling back actually throttled the application.
+
+### What is still configured, and why
+
+Only the parts that are Emacs' own display layer rather than the VT engine, so
+they outlived the move:
+
+- **`nobreak-char-display` is nil in ghostel buffers.** Claude Code pads its UI
+  with U+00A0, and the stock `nobreak-space` face is
+  `(:inherit escape-glyph :underline t)` — so every pad character rendered as a
+  cyan underlined cell, appearing as a stray "underscore" after the `❯` prompt.
+  Highlighting non-break space is a prose-editing aid; a terminal must draw
+  exactly the glyphs the application sent.
+- **`bidi-paragraph-direction` is pinned** to `left-to-right` with
+  `bidi-inhibit-bpa`, so redisplay skips the bidirectional algorithm on
+  290-column lines it re-runs every frame. ghostel sets `truncate-lines` and the
+  scroll margins itself, but not these.
+- **`gc-cons-threshold` settles at 32MB, not Emacs' stock 800KB.** A terminal
+  conses a fresh propertized string per line per redraw. At 800KB a
+  full-viewport repaint blew the budget several times a second, and collections
+  in this config measured ~26ms each — every one a visible hitch.
+- **company and emojify are switched off in `ghostel-mode`.** Both are
+  *globalized* minor modes that turn themselves on from
+  `after-change-major-mode-hook`, which `run-mode-hooks` runs **after**
+  `ghostel-mode-hook` — so disabling them in a mode hook gets silently undone,
+  and `company-global-modes` / `emojify-inhibit-major-modes` are the only
+  opt-outs that stick. company matters more here than it did under vterm:
+  ghostel forwards foreign buffer insertions to the pty from
+  `after-change-functions`, so a completion that edits the buffer is a
+  completion typed at the shell.
+- **`read-process-output-max` is 1MB** — fewer `read(2)` calls when a command
+  dumps a lot of text. It was never what stopped partial frames; under vterm,
+  64KB and 1MB reads delivered identical frame counts.
+
+**font-lock is no longer load-bearing.** Under vterm it was: vterm's module
+wrote every colour into a `font-lock-face` property, which reaches redisplay
+only through the `(face font-lock-face)` entry font-lock pushes onto
+`char-property-alias-alist`, so excluding `vterm-mode` from
+`font-lock-global-modes` looked free and instead dropped every colour in the
+terminal. ghostel writes the real `face` property, turns font-lock off in
+`ghostel-mode` itself, and points `font-lock-unfontify-region-function` at
+`#'ignore` so a config that forces font-lock back on cannot strip the per-cell
+faces on redraw.
+
+### Muscle-memory aliases
+
+vterm and multi-vterm are gone, but the old `M-x` names still work. Everything
+routes through a `my/term*` layer, so swapping the backend again means editing
+those aliases and nothing else.
+
+| Old name | Now runs | Note |
+| --- | --- | --- |
+| `vterm` | `my/term` → `ghostel` | |
+| `vterm-other-window` | `my/term-new` | |
+| `multi-vterm` | `my/term-new` | `multi-vterm` always made a **new** numbered terminal; plain `ghostel` reuses the existing one and only creates on a prefix arg, so this is a wrapper rather than a straight alias |
+| `multi-vterm-next` / `-prev` | `ghostel-next` / `ghostel-previous` | |
+| `multi-vterm-dedicated-toggle` | `my/term-dedicated-toggle` | ghostel has no dedicated-window concept, so this is a side window at the bottom, 30 lines — the height `multi-vterm-dedicated-window-height` used to ask for |
+
+`my/term-project` (`ghostel-project`) and `my/term-list`
+(`ghostel-list-buffers`) have no vterm predecessor.
+
+Inside a ghostel buffer, `C-c C-t` is copy mode from `ghostel-mode-map`, which
+outranks the global `C-c C-t` — the same arrangement `vterm-copy-mode` had with
+`multi-vterm`.
 
 ## Fonts, icons and emoji
 
@@ -362,10 +475,14 @@ into `~/.emacs.d/emojis`, which does not exist, so nothing rendered.
   configure.
 - **Language servers** — eglot and xref, both built-in.
 - **Diagnostics** — flycheck.
-- **Terminal and containers** — vterm, multi-vterm, docker.el.
-- **AI** — aidermacs on the vterm backend, routed through OpenRouter. The
-  variable is `aidermacs-backend`; `aidermacs-terminal-backend` does not exist
-  and never took effect, so this had silently stayed on comint.
+- **Terminal and containers** — ghostel, docker.el.
+- **AI** — aidermacs on the comint backend, routed through OpenRouter.
+  aidermacs knows exactly two backends, comint and vterm, and there is no
+  ghostel one, so removing vterm settled this. No real loss: the variable is
+  `aidermacs-backend`, the misspelt `aidermacs-terminal-backend` never took
+  effect, and aider had silently run on comint all along. If its output ever
+  renders badly, `ghostel-comint-global-mode` gives comint buffers ghostel's VT
+  rendering.
 - **Theme** — doom-moonlight with doom-modeline, which shows the Ruby version.
 - **Built-ins used as built-ins** (`:ensure nil :straight nil`) — eglot,
   which-key, editorconfig, treesit, markdown-ts-mode, ibuffer, delsel, server.
@@ -373,11 +490,13 @@ into `~/.emacs.d/emojis`, which does not exist, so nothing rendered.
 
 Three pins worth knowing about:
 
-- `straight-built-in-pseudo-packages` includes `project` and `xref`. multi-vterm
-  declares `(project "0.3.0")` as a dependency, which made straight clone the
-  GNU ELPA `project` and `xref` on top of Emacs 31's own; those then loaded
-  *after* the built-ins were already in memory, leaving two versions live at
-  once. Both are the backbone of the Ruby setup.
+- `straight-built-in-pseudo-packages` includes `project` and `xref`. The package
+  that forced this was multi-vterm, which declared `(project "0.3.0")` as a
+  dependency and so made straight clone the GNU ELPA `project` and `xref` on top
+  of Emacs 31's own; those then loaded *after* the built-ins were already in
+  memory, leaving two versions live at once. Both are the backbone of the Ruby
+  setup. multi-vterm is gone, but the pin stays — any package declaring a
+  `project` dependency would reintroduce it.
 - `markdown-ts-mode` ships with Emacs 31 but upstream deliberately withholds the
   autoload cookie, so the symbol is void until the file is required. With a bare
   `auto-mode-alist` entry every `.md` buffer died on "Ignoring unknown mode" and
@@ -408,14 +527,14 @@ which never went through zsh.
 | `M-/` | `comment-or-uncomment-region` |
 | `<escape>` | `keyboard-escape-quit` |
 | `C-c d` | `docker` |
-| `C-c t` | `vterm` |
-| `C-c C-t` | `multi-vterm` |
-| `C-c m t` / `C-c m n` / `C-c m p` | `multi-vterm-dedicated-toggle` / `-next` / `-prev` |
+| `C-c t` | `ghostel` |
+| `C-c C-t` | `my/term-new` (a new terminal, as `multi-vterm` did) |
+| `C-c m t` / `C-c m n` / `C-c m p` | `my/term-dedicated-toggle` / `my/term-next` / `my/term-previous` |
 | `C-c a a s f b r R k` | the same aidermacs commands as `Hyper-a` |
 | `C-c ! l n p c v` | `flycheck-list-errors` / `next-error` / `previous-error` / `buffer` / `verify-setup` |
 
 Editor defaults: line numbers everywhere except org, term, shell, ibuffer,
-treemacs and vterm buffers; `delete-selection-mode`; trailing whitespace stripped
+treemacs and ghostel buffers; `delete-selection-mode`; trailing whitespace stripped
 on save; no menu, tool or scroll bar; visible bell; UTF-8 preferred.
 
 ## Checks
