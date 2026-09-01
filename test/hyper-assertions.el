@@ -51,7 +51,7 @@
     ("c d" . docker)
     ("c f" . my/ruby-format-buffer)
     ("c l" . flycheck-list-errors)
-    ("c t" . vterm)
+    ("c t" . ghostel)
     ("c R" . my/rails-console)
     ("c n" . xref-find-references)
     ("c h" . eldoc-doc-buffer)

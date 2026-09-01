@@ -124,7 +124,7 @@ name the same COMMAND, and `keymap-global-set' is idempotent."
 (my-hyper-set "c d" #'docker)
 (my-hyper-set "c f" #'my/ruby-format-buffer)
 (my-hyper-set "c l" #'flycheck-list-errors)
-(my-hyper-set "c t" #'vterm)
+(my-hyper-set "c t" #'ghostel)
 (my-hyper-set "c R" #'my/rails-console)
 (my-hyper-set "c n" #'xref-find-references)
 (my-hyper-set "c h" #'eldoc-doc-buffer)
