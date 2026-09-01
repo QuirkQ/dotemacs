@@ -43,6 +43,9 @@ recentf.eld
 # straight packages
 /straight/
 
+# forge's issue/pull-request cache
+/forge-database.sqlite
+
 # reftex files
 *.rel
 

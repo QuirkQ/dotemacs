@@ -364,6 +364,75 @@ has already given the buffer its own `exec-path'."
   :straight (magit :type git :host github :repo "magit/magit")
   :bind ("C-x g" . magit-status))
 
+;; forge : https://github.com/magit/forge
+;;
+;; Forge carries no token of its own. It goes through ghub, which looks one
+;; up with `auth-source-search' against the API host and an ident of
+;; "<git config github.user>^forge" -- so handing Forge the 1Password token
+;; means answering that query.
+;;
+;; Hence a custom `auth-source' backend and not an ~/.authinfo entry: the
+;; token stays in 1Password and in memory and never lands in a file. Emacs
+;; supports this outright. `auth-source-backend-parser-functions' turns an
+;; entry in `auth-sources' into a backend, and that backend's
+;; `:search-function' answers the query.
+;;
+;; The backend has to do its own matching. `auth-source-search' does not
+;; re-check a backend's results against the spec it was given, so a search
+;; function that answered indiscriminately would hand the GitHub token to
+;; the next caller that asked auth-source for an SMTP password.
+
+(declare-function auth-source-backend "auth-source")
+
+(defconst my/github-auth-hosts '("api.github.com" "github.com")
+  "Hosts `my/github-auth-source-search' answers for.
+ghub asks for the API host; github.com is here for anything that keys on
+the web host instead.")
+
+(defun my/github-auth-host-p (host)
+  "Non-nil when HOST, as `auth-source' spells it, names GitHub.
+HOST arrives as a string, a list of strings, or t for \"any host\" -- and
+t must not match, or a wildcard search would be handed the token."
+  (seq-some (lambda (h) (member h my/github-auth-hosts))
+            (if (listp host) host (list host))))
+
+(defun my/github-auth-source-search (&rest spec)
+  "Answer an `auth-source' query in SPEC for GitHub, from 1Password.
+
+Nil for every other host, and nil when 1Password cannot produce the
+token -- a locked vault or a missing CLI then falls through to the rest
+of `auth-sources' rather than returning a credential that is empty.
+`my-op-get' has already said why on its way out."
+  (let ((host (plist-get spec :host)))
+    (when (my/github-auth-host-p host)
+      (when-let* ((token (my-op-get 'github-token)))
+        (list (list :host (if (listp host) (car host) host)
+                    :user (plist-get spec :user)
+                    ;; A function, as every other backend returns: callers
+                    ;; funcall `:secret' rather than reading it.
+                    :secret (lambda () token)))))))
+
+(defun my/github-auth-source-backend (entry)
+  "Return the 1Password backend when ENTRY in `auth-sources' names it."
+  (when (eq entry 'my-op-github)
+    (auth-source-backend
+     :source "1Password"
+     :type 'my-op
+     :search-function #'my/github-auth-source-search)))
+
+(use-package forge
+  :ensure t
+  :straight (forge :type git :host github :repo "magit/forge")
+  :after magit
+  :init
+  ;; Registered when magit loads, which is well ahead of anything ghub does.
+  ;; At the front of `auth-sources' so 1Password wins over a stale ~/.authinfo
+  ;; line, while still leaving those backends reachable behind it.
+  (with-eval-after-load 'auth-source
+    (add-hook 'auth-source-backend-parser-functions
+              #'my/github-auth-source-backend)
+    (add-to-list 'auth-sources 'my-op-github)))
+
 ;; emacs-emojify : https://github.com/iqbalansari/emacs-emojify
 ;; Only for shortcode/ascii substitution (":wink:" -> the codepoint). The
 ;; rendering itself is native: see the `emoji' fontset rule below.
