@@ -61,6 +61,7 @@ flycheck_*.el
 
 # config test harness
 /test/check-config.log
+/test/check-runtime.log
 
 # server auth directory
 /server/

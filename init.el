@@ -151,7 +151,80 @@ daemon with no frame yet; callers must cope with that."
   :config
   ;; Enable environment version display
   (setq doom-modeline-env-version t)
-  (setq doom-modeline-env-enable-ruby t))
+  (setq doom-modeline-env-enable-ruby t)
+
+  ;; Which interpreter the version indicator actually measures.
+  ;;
+  ;; `doom-modeline-env-setup-ruby' runs from `ruby-ts-mode-hook' and defers
+  ;; the real work to the buffer-local `hack-local-variables-hook', while
+  ;; `global-mise-mode' turns `mise-mode' on from
+  ;; `after-change-major-mode-hook'. `run-mode-hooks' (subr.el) runs those
+  ;; three in this order and no other:
+  ;;
+  ;;   ruby-ts-mode-hook -> (hack-local-variables 'no-mode)
+  ;;                     -> after-change-major-mode-hook
+  ;;
+  ;; and Emacs 31's `normal-mode' reaches `hack-local-variables' only through
+  ;; `run-mode-hooks', so there is no second, later pass to correct it. So
+  ;; `doom-modeline-env-update-ruby' resolved "ruby" over `exec-path' exactly
+  ;; one step before mise replaced it, cached the absolute path it found in
+  ;; `doom-modeline-env--command', and never resolved again -- the modeline
+  ;; reported the *launch environment's* ruby for the life of the buffer. From
+  ;; the Dock or Spotlight that is /usr/bin/ruby, i.e. "Ruby 2.6.10", on a
+  ;; machine where every project pins something else. Launched from a terminal
+  ;; it looked correct by accident only: an interactive zsh has run
+  ;; `mise activate', so the inherited PATH carries mise's *global* ruby --
+  ;; which is still not what a project pins (4.0.6 against epoxy's 4.0.5).
+  ;;
+  ;; Nothing about that is Ruby-specific. `doom-modeline-env-version' turns on
+  ;; all six of upstream's indicators, and every one of them is wired the same
+  ;; way, so every one of them measures the launch environment.
+  ;;
+  ;; So take the setup off the mode hooks and run it from
+  ;; `after-change-major-mode-hook' instead, APPENDED: `add-hook' prepends and
+  ;; mise registers on that same hook, so appending is what puts this after
+  ;; `global-mise-mode-enable-in-buffer'. Moved rather than duplicated on
+  ;; purpose -- `doom-modeline-env--get' is asynchronous, so leaving the early
+  ;; call in place would race two `ruby --version' processes whose filters
+  ;; write the same variable, and the wrong one could land last.
+  ;;
+  ;; File-local variables are still honoured. That is what upstream's
+  ;; indirection through `hack-local-variables-hook' buys, and by this point
+  ;; in `run-mode-hooks' `hack-local-variables' has already run.
+  ;;
+  ;; test/modeline-env-assertions.el is the executable spec, and asserts the
+  ;; hook order rather than trusting it.
+  (defconst my/doom-modeline-env-languages
+    '((python python-mode python-ts-mode)
+      (ruby   ruby-mode ruby-ts-mode enh-ruby-mode)
+      (perl   perl-mode)
+      (go     go-mode go-ts-mode)
+      (elixir elixir-mode elixir-ts-mode)
+      (rust   rust-mode rust-ts-mode))
+    "Alist of (LANGUAGE MODE...), one entry per `doom-modeline-def-env'.
+Mirrors the `:hooks' of each definition in doom-modeline-env.el. Data
+rather than two hand-written lists so the hooks taken away below and the
+dispatch in `my/doom-modeline-setup-env' cannot drift apart; a language
+upstream adds is one line here.")
+
+  (defun my/doom-modeline-setup-env ()
+    "Resolve this buffer's interpreter version for the modeline.
+Runs from `after-change-major-mode-hook', which is late enough that mise
+has already given the buffer its own `exec-path'."
+    (when-let* ((entry (seq-find (lambda (entry) (derived-mode-p (cdr entry)))
+                                 my/doom-modeline-env-languages))
+                (update (intern-soft (format "doom-modeline-env-update-%s"
+                                             (car entry)))))
+      (when (fboundp update)
+        (funcall update))))
+
+  (dolist (entry my/doom-modeline-env-languages)
+    (when-let* ((setup (intern-soft (format "doom-modeline-env-setup-%s"
+                                            (car entry)))))
+      (dolist (mode (cdr entry))
+        (remove-hook (intern (format "%s-hook" mode)) setup))))
+
+  (add-hook 'after-change-major-mode-hook #'my/doom-modeline-setup-env t))
 
 ;; treemacs : https://github.com/Alexander-Miller/treemacs
 (use-package treemacs
