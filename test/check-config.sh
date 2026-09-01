@@ -44,7 +44,7 @@ echo "== byte-compile =="
 # actually parses these forms -- without it use-package aborts on the
 # unrecognized keyword and the bodies are never compiled at all.
 blocking='is an obsolete|Malformed|Invalid|misplaced|wrong number of arguments|Wrong type|Error \(use-package\)'
-for f in early-init.el init.el lisp/my-hyper.el; do
+for f in early-init.el init.el lisp/my-hyper.el lisp/my-op.el; do
   [[ -f $root/$f ]] || continue
   out=$("$EMACS" -Q --batch \
           -l "$root/test/compile-prelude.el" \
@@ -76,6 +76,23 @@ if [[ -f $root/lisp/my-hyper.el ]]; then
   fi
 else
   pass "lisp/my-hyper.el not present yet"
+fi
+
+echo "== 1Password reader =="
+if [[ -f $root/lisp/my-op.el ]]; then
+  # Drives my-op.el against a stub CLI in a temp directory -- it never runs
+  # the real `op', so this stays offline and cannot raise a Touch ID prompt.
+  out=$("$EMACS" -Q --batch -l "$root/lisp/my-op.el" \
+        -l "$root/test/op-assertions.el" 2>&1)
+  printf '\n--- op ---\n%s\n' "$out" >>"$log"
+  if grep -q '^op: ok' <<<"$out"; then
+    pass "$(grep '^op: ok' <<<"$out")"
+  else
+    bad "1Password reader assertions"
+    sed 's/^/       /' <<<"$out"
+  fi
+else
+  pass "lisp/my-op.el not present yet"
 fi
 
 echo
